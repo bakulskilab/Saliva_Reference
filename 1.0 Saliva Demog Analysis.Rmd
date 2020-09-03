@@ -1,0 +1,592 @@
+---
+title: "06-03-19 Saliva Demog Analysis"
+author: "Lauren Middleton"
+date: "6/3/2019"
+output: html_document
+---
+```{r}
+# Purpose: Do statistical analysis on demog_ex. Checking for differences in variables between Male and Female groups
+# 
+# Inputs: 06-03-19 demog_ex.csv   - 22 participants and 26 variables, file was constructed based on the results of the
+#                                   survey given to the parents of participants
+#         05-28-19 demog_full.csv - demographics by epithelial, immune, oragene, and whole saliva samples
+#
+# Outputs: 06-03-19 demog_ex_dropped.csv - dropped one participant due to their fractions not passing QC
+#          stats analysis
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#install.packages("ggpubr")
+```
+
+#set up;
+```{r}
+setwd("C:/Users/HP/Documents/Research 2019")
+
+library(ggplot2)
+library(reshape2)
+library(readr)
+library(RColorBrewer)
+library(compareGroups)
+```
+
+#import dataset and save it as demog_ex;
+```{r}
+#Load demog_ex 
+demog_ex <- read.csv("C:/Users/HP/Documents/Research 2019/06-03-19 demog_ex.csv",
+                  header=TRUE,
+                  sep="," )
+#Load demog_full
+demog_full <- read.csv("C:/Users/HP/Documents/Research 2019/05-28-19 demog_full.csv")
+
+# Exclude participant ID = 8 because we didn't use any of their samples;
+#keep all rows except 8;
+x <- demog_ex[-c(8), ]
+#visually check that ID = 8 was removed;
+demog_ex <- x
+rm(x)
+
+#remove the demog_full excluded participant
+x <- demog_full[-c(75),]
+
+#Save demog_ex with n=21, not n=22
+write.csv(demog_ex, file = "06-03-19 demog_ex_dropped.csv")
+
+#Use this file to run the whole code:
+demog_ex <- read.csv("C:/Users/HP/Documents/Research 2019/06-03-19 demog_ex_dropped.csv",
+                     header = TRUE,
+                     sep = ",")
+View(demog_ex)
+```
+
+
+# Calculate basic stats
+```{r}
+#Race (0=white for white_bin)
+table(demog_ex$white_bin) #10 white, 11 non-white
+#(1=biracial for race_birac)
+table(demog_ex$race_birac) #10 biracial, 11 one race
+
+#Age
+mean(demog_ex$age.r)
+sd(demog_ex$age.r)
+summary(demog_ex$age.r)
+
+#cell count
+median(demog_ex$cell_count)
+sd(demog_ex$cell_count)
+summary(demog_ex$cell_count)
+
+#Viability
+median(demog_ex$viability)
+sd(demog_ex$viability)
+summary(demog_ex$viability)
+
+#Volume
+median(demog_ex$volume)
+sd(demog_ex$volume)
+summary(demog_ex$volume)
+```
+
+#Add Linear regression and stats info to volume/cell count plot;
+##Not really a good test b/c cell count and volume are not normal;
+```{r}
+#create a function to extract stats
+ggplotRegression <- function (fit) {
+
+#loads package
+require(ggplot2)
+#plot the scatterplot
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  #create the regression line
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 5),
+                     "Intercept =",signif(fit$coef[[1]],5 ),
+                     " Slope =",signif(fit$coef[[2]], 5),
+                     " P =",signif(summary(fit)$coef[2,4], 5)))
+}
+
+#use the function
+fit1 <- lm(demog_ex$cell_count ~ demog_ex$volume, data = demog_ex)
+ggplotRegression(fit1)
+```
+
+
+# Wilcoxon signed-rank test for differences between continuous vars of male vs. female;
+##unpaired, independant samples, categorical vs continuous;
+##these are the same as are in the graphs;
+```{r}
+#testing wilcox for age.r
+wilcox.test(demog_ex$age.r ~ demog_ex$Male, alternative = "two.sided")
+#p = 0.733
+
+for (i in c(12:18, 22:26)) {
+  p_value <- wilcox.test(demog_ex[ ,i] ~demog_ex$Male, alternative = "two.sided")
+  print(colnames(demog_ex[i]))
+  print(p_value)
+}
+#confirmed age.r match
+```
+
+
+# Fisher exact test for categorical variables (white_bin and Sick);
+```{r}
+#white_bin
+fisher.test(x = demog_ex$Male, y = demog_ex$white_bin, alternative = "two.sided", conf.level = 0.95)
+
+#Sick
+fisher.test(x = demog_ex$Male, y = demog_ex$Sick, alternative = "two.sided", conf.level = 0.95)
+```
+
+
+#testing for correlation btwn volume cell count;
+##spearman is a nonparametric test between 2 continous vars;
+```{r}
+cor.test(demog_ex$cell_count, demog_ex$volume, method = "spearman")
+```
+
+
+#trying to use compareGroups - table 1 information
+```{r}
+#but first make labels for binary variables
+#check original data
+table(demog_ex$white_bin)
+#relabel the white_bin
+race_label <- factor(demog_ex$white_bin,
+                     levels = c(0, 1),
+                     labels = c("White", "POC"))
+#check that the labeling went okay
+table(demog_ex$white_bin, race_label)
+
+#add race_label to demog_ex
+demog_ex$race_label <- race_label
+
+```
+
+
+
+```{r}
+#save table as "res"
+#compare by Male_label
+#variables to look at are listed
+#2 is doing a kruskall-wallis test - this is better for nonparametric ANOVA (3 samples);
+res <- compareGroups(Male_label ~ Sick
+              + cell_count
+              + viability
+              + volume
+              + age.r
+              + race_label
+              + cells_mL,
+              data = demog_ex,
+              #3 = categorical, 2 = non-normal;
+              method = c(race_label = 3,
+                         Sick = 3,
+                         cell_count = 2,
+                         viability = 2, 
+                         volume = 2,
+                         age.r = 2,
+                         cells_mL = 2),
+              alpha = 0.05,
+              #true means using labels. I don't have any, but I can fix that;
+              include.label = TRUE,
+              Q1 = 0,
+              Q3 = 1)
+```
+
+```{r}
+#prints simplified table with p-values;
+res
+#prints detailed N, mean, sd, lcl, hcl, p-value, OR;
+summary(res)
+```
+
+```{r}
+#create descriptive table called restab from res;
+restab <- createTable(res)
+print(restab, which.table = "descr")
+restab$descr #unformatted table;
+# restab$descr[1,3] <- .999
+```
+
+# Manually running kruskall wallis test and compare p-values to table;
+```{r}
+#Kruskal-Wallis test is a non-parametric alternative version of a one-way ANOVA test
+#Similar to two-sample Wilcoxon test, but can include more than two groups;
+#age;
+kruskal.test(demog_ex$age.r ~ demog_ex$Male_label, data = demog_ex)
+
+#viability
+kruskal.test(demog_ex$viability ~ demog_ex$Male_label, data = demog_ex)
+```
+
+# Does compareGroups run mean or median;
+```{r}
+#subset Female;
+female_set <- subset(demog_ex, demog_ex$Male == 0, )
+
+#age
+mean(female_set$age.r) #12.14
+median(female_set$age.r) #11.7
+
+#it runs median;
+```
+
+
+## 7/16/19
+# Check for correlations between demog variables Male vs ____
+```{r}
+##Wilcoxon: nonparametric, continuous var vs categorical t-test (Ho = two populations are equal)
+##Chi Squared: nonparametric, categorical predictors (Ho: the populations are independent)
+  ##Yates correction: "current use is limited" - Wikipedia, therefore correct = FALSE
+  ##tests frequency of each category... - binary doesn't go well
+
+#Male vs sick (Chi-sq)
+#first find the counts of each option: Male/sick, male/not sick, female/sick, female/not sick
+library(plyr)
+freq_male_sick <- count(demog_ex, vars=c("Male", "Sick"))
+#Chi-square test
+male_sick <- chisq.test(freq_male_sick, correct = FALSE) #p-value = 0.1003
+
+#Male vs cell_count
+male_cell_count <- wilcox.test(cell_count ~ Male, data = demog_ex) #p-value = 0.6768
+
+#Male vs viability
+male_viability <- wilcox.test(viability ~ Male, data = demog_ex) #p-value = 0.1729
+
+#Male vs volume
+male_volume <- wilcox.test(volume ~ Male, data = demog_ex) #p-value = 0.7839
+
+#Male vs overnight
+male_overnight <- wilcox.test(overnight ~ Male, data = demog_ex) #p-value = 0.6733
+
+#Male vs batch
+freq_male_batch <- count(demog_ex, vars=c("Male", "batch"))
+male_batch <- chisq.test(freq_male_batch, correct = FALSE) #p-value = 0.9794
+
+#Male vs age (Wilcoxon)
+male_age <- wilcox.test(age.r ~ Male, data = demog_ex) #p-value = 0.7333
+
+#Male vs white_bin
+freq_male_race <- count(demog_ex, vars=c("Male", "white_bin"))
+male_white <- chisq.test(freq_male_race, correct = FALSE) #p-value = 0.764
+
+#Male vs cells_mL
+male_cells_mL <- wilcox.test(cells_mL ~ Male, data = demog_ex) #p-value = 0.7333
+```
+
+# Check for correlations between demog variables Cell Type vs ____
+```{r}
+##Wilcoxon: nonparametric, continuous var vs categorical t-test (Ho = two populations are equal)
+##Chi Squared: nonparametric, categorical predictors (Ho: the populations are independent)
+  ##Yates correction: "current use is limited" - Wikipedia, therefore correct = FALSE
+  ##tests frequency of each category... - binary doesn't go well
+
+#Male vs sick (Chi-sq)
+#first find the counts of each option: Male/sick, male/not sick, female/sick, female/not sick
+library(plyr)
+freq_male_sick <- count(demog_ex, vars=c("Male", "Sick"))
+View(freq_male_sick)
+#Chi-square test
+male_sick <- chisq.test(freq_male_sick, correct = FALSE) #p-value = 0.1003
+
+#Male vs cell_count
+male_cell_count <- wilcox.test(cell_count ~ Male, data = demog_ex) #p-value = 0.6768
+
+#Male vs viability
+male_viability <- wilcox.test(viability ~ Male, data = demog_ex) #p-value = 0.1729
+
+#Male vs volume
+male_volume <- wilcox.test(volume ~ Male, data = demog_ex) #p-value = 0.7839
+
+#Male vs overnight
+male_overnight <- wilcox.test(overnight ~ Male, data = demog_ex) #p-value = 0.6733
+
+#Male vs batch
+freq_male_batch <- count(demog_ex, vars=c("Male", "batch"))
+male_batch <- chisq.test(freq_male_batch, correct = FALSE) #p-value = 0.9794
+
+#Male vs age (Wilcoxon)
+male_age <- wilcox.test(age.r ~ Male, data = demog_ex) #p-value = 0.7333
+
+#Male vs white_bin
+freq_male_race <- count(demog_ex, vars=c("Male", "white_bin"))
+male_white <- chisq.test(freq_male_race, correct = FALSE) #p-value = 0.764
+
+#Male vs cells_mL
+male_cells_mL <- wilcox.test(cells_mL ~ Male, data = demog_ex) #p-value = 0.7333
+```
+
+
+# Check for correlations between demog variables Sick vs ____
+```{r}
+#Sick vs cell count
+sick_cellcount <- wilcox.test(cell_count ~ Sick, data = demog_ex) #p-value = 0.7398
+
+#Sick vs viability
+sick_viability <- wilcox.test(viability ~ Sick, data = demog_ex) #p-value = 0.1912
+
+#Sick vs volume
+sick_volume <- wilcox.test(volume ~ Sick, data = demog_ex) #p-value = 0.8003
+
+#Sick vs overnight
+freq_sick_overnight <- count(demog_ex, vars=c("Sick", "overnight"))
+sick_overnight <- chisq.test(freq_sick_overnight, correct = FALSE) #p-value = 0.09726
+
+#Sick v batch
+freq_sick_batch <- count(demog_ex, vars=c("Sick", "batch"))
+sick_batch <- chisq.test(freq_sick_batch, correct = FALSE) #p-value = 0.09726
+
+#Sick vs age (Wilcoxon)
+sick_age <- wilcox.test(age.r ~ Sick, data = demog_ex) #p-value = 0.5338
+
+#Sick vs white_bin
+freq_sick_race <- count(demog_ex, vars=c("Sick", "white_bin"))
+sick_white <- chisq.test(freq_sick_race, correct = FALSE) #p-value = 0.08941
+
+#Sick vs cells_mL
+sick_cells_mL <- wilcox.test(cells_mL ~ Sick, data = demog_ex) #p-value = 0.4707
+```
+
+# Check for correlations between demog variables Cell count vs ____
+```{r}
+#Cell count vs viability
+cell_count_viability <- cor.test(demog_ex$cell_count, demog_ex$viability, method = "spearman")
+cell_count_viability #p-value = 0.1764
+
+#Cell count vs volume
+cell_count_volume <- cor.test(demog_ex$cell_count, demog_ex$volume, method = "spearman")
+cell_count_volume #p-value = 0.9776
+
+#Cell count vs overnight
+cell_count_overnight <- wilcox.test(cell_count ~ overnight, data = demog_ex) #p-value = 0.5476
+
+#Cell count vs age
+cell_count_age <- cor.test(demog_ex$cell_count, demog_ex$age.r, method = "spearman")
+cell_count_age #p-value = 0.2719
+
+#Cell count vs batch
+cell_count_batch <- cor.test(demog_ex$cell_count, demog_ex$batch, method = "spearman")
+
+#Cell count vs white_bin
+cell_count_white <- wilcox.test(cell_count ~ white_bin, data = demog_ex) #p-value = 0.09862
+
+#****************
+#Cell count vs cells_mL 
+cell_count_mL <- cor.test(demog_ex$cell_count, demog_ex$cells_mL, method = "spearman")
+cell_count_mL #p-value = 4.527e-06
+#****************
+```
+
+# Check for correlations between demog variables Viability vs ____
+```{r}
+#viability vs volume #LOTS OF "EXACT TIES" IN THIS COMPARISON
+viability_volume <- cor.test(demog_ex$viability, demog_ex$volume, method = "spearman")
+viability_volume #p-value = 0.2028
+
+#viability vs overnight
+viability_overnight <- wilcox.test(viability ~ overnight, data = demog_ex) #p-value = 0.1265
+
+#viability vs age
+viability_age <- cor.test(demog_ex$viability, demog_ex$age.r, method = "spearman")
+viability_age #p-value = 0.4201
+
+#viability vs batch
+viability_batch <- kruskal.test(demog_ex$viability ~ demog_ex$batch, data = demog_ex)
+
+#viability vs white_bin
+viability_white <- wilcox.test(viability ~ white_bin, data = demog_ex) #p-value = 0.4179
+
+#viability vs cells_mL
+viability_mL <- cor.test(demog_ex$viability, demog_ex$cells_mL, method = "spearman")
+viability_mL #p-value = 0.3404
+```
+
+# Check for correlations between demog variables Volume vs ____
+```{r}
+#volume vs overnight
+volume_overnight <- wilcox.test(volume ~ overnight, data = demog_ex) #p-value = 0.3606
+
+#volume vs age
+volume_age <- cor.test(demog_ex$volume, demog_ex$age.r, method = "spearman")
+volume_age #p-value = 0.3553
+
+#volume vs white_bin
+volume_white <- wilcox.test(volume ~ white_bin, data = demog_ex) #p-value = 0.08892
+
+#volume vs batch
+volume_batch <- kruskal.test(demog_ex$volume ~ demog_ex$batch, data = demog_ex)
+
+#volume vs cells_mL
+volume_mL <- cor.test(demog_ex$volume, demog_ex$cells_mL, method = "spearman")
+volume_mL #p-value = 0.1534
+```
+
+# Check for correlations between demog variables Overnight vs ____
+```{r}
+#******************
+#overnight vs age
+overnight_age <- wilcox.test(age.r ~ overnight, data = demog_ex) #p-value = 0.00285
+#******************
+
+#overnigth vs batch
+freq_overnight_batch <- count(demog_ex, vars=c("overnight", "batch"))
+View(freq_overnight_batch)
+overnight_batch <- chisq.test(freq_overnight_batch, correct = FALSE) #p-value = 0.6104
+
+#overnight vs white_bin
+freq_overnight_race <- count(demog_ex, vars=c("overnight", "white_bin"))
+View(freq_overnight_race)
+overnight_white <- chisq.test(freq_overnight_race, correct = FALSE) #p-value = 0.2962
+
+#overnight vs cells_mL
+overnight_mL <- wilcox.test(cells_mL ~ overnight, data = demog_ex) #p-value = 0.3127
+```
+
+# Check for correlations between demog variables batch vs ____
+```{r}
+#batch vs age
+batch_age <- kruskal.test(demog_ex$age.r ~ demog_ex$batch, data = demog_ex)
+
+#batch vs white_bin
+freq_batch_race <- count(demog_ex, vars=c("batch", "white_bin"))
+View(freq_overnight_race)
+batch_white <- chisq.test(freq_overnight_race, correct = FALSE) #p-value = 0.2962
+
+#batch vs cells_mL
+batch_mL <- kruskal.test(demog_ex$cells_mL ~ demog_ex$batch, data = demog_ex)
+
+#batch vs overnight
+freq_overnight_batch <- count(demog_ex, vars=c("overnight", "batch"))
+View(freq_overnight_batch)
+overnight_batch <- chisq.test(freq_overnight_batch, correct = FALSE) #p-value = 0.6104
+```
+
+# Check for correlations between demog variables Age vs ____, white_bin vs cells/mL
+```{r}
+#age vs white_bin
+age_white <- wilcox.test(age.r ~ white_bin, data = demog_ex) #p-value = 0.9177
+
+#age vs cells_mL
+age_mL <- cor.test(demog_ex$age.r, demog_ex$cells_mL, method = "spearman")
+age_mL #p-value = 0.1688
+
+#white_bin vs cells_mL
+white_mL <- wilcox.test(cells_mL ~ white_bin, data = demog_ex) #p-value = 0.3494
+```
+
+# Set up the matrix for the heatmap
+```{r}
+#first generate the matrix
+p.mat<-matrix(nrow=10, ncol=10)
+#name the rows of the matrix
+rownames(p.mat)<-c("Male",
+                   "Sick",
+                   "cell_count",
+                   "viability",
+                   "volume",
+                   "overnight",
+                   "batch",
+                   "age.r",
+                   "white_bin",
+                   "cells_mL")
+#name the columns the same as the rows of the matrix
+colnames(p.mat)<-rownames(p.mat)
+```
+
+
+# Save all the p-value results into the matrix
+```{r}
+#male_sick has the results of all the previous tests
+str(male_sick)
+p.mat['Male','Sick'] <- male_sick$p.value
+p.mat["Male", "cell_count"] <- male_cell_count$p.value
+p.mat["Male", "viability"] <- male_viability$p.value
+p.mat["Male", "volume"] <- male_volume$p.value
+p.mat["Male", "overnight"] <- male_overnight$p.value
+p.mat["Male", "batch"] <- male_batch$p.value
+p.mat["Male", "age.r"] <- male_age$p.value
+p.mat["Male", "white_bin"] <- male_white$p.value
+p.mat["Male", "cells_mL"] <- male_cells_mL$p.value
+
+#Sick
+p.mat["Sick", "cell_count"] <- sick_cellcount$p.value
+p.mat["Sick", "viability"] <- sick_viability$p.value
+p.mat["Sick", "volume"] <- sick_volume$p.value
+p.mat["Sick", "overnight"] <- sick_overnight$p.value
+p.mat["Sick", "batch"] <- sick_batch$p.value
+p.mat["Sick", "age.r"] <- sick_age$p.value
+p.mat["Sick", "white_bin"] <- sick_white$p.value
+p.mat["Sick", "cells_mL"] <- sick_cells_mL$p.value
+
+#Cell count
+p.mat["cell_count", "viability"] <- cell_count_viability$p.value
+p.mat["cell_count", "volume"] <- cell_count_volume$p.value
+p.mat["cell_count", "overnight"] <- cell_count_overnight$p.value
+p.mat["cell_count", "batch"] <- cell_count_batch$p.value
+p.mat["cell_count", "age.r"] <- cell_count_age$p.value
+p.mat["cell_count", "white_bin"] <- cell_count_white$p.value
+p.mat["cell_count", "cells_mL"] <- cell_count_mL$p.value
+
+#Viability
+p.mat["viability", "volume"] <- viability_volume$p.value
+p.mat["viability", "overnight"] <- viability_overnight$p.value
+p.mat["viability", "batch"] <- viability_batch$p.value
+p.mat["viability", "age.r"] <- viability_age$p.value
+p.mat["viability", "white_bin"] <- viability_white$p.value
+p.mat["viability", "cells_mL"] <- viability_mL$p.value
+
+#Volume
+p.mat["volume", "overnight"] <- volume_overnight$p.value
+p.mat["volume", "batch"] <- volume_batch$p.value
+p.mat["volume", "age.r"] <- volume_age$p.value
+p.mat["volume", "white_bin"] <- volume_white$p.value
+p.mat["volume", "cells_mL"] <- volume_mL$p.value
+
+#Overnight
+p.mat["overnight", "batch"] <- overnight_batch$p.value
+p.mat["overnight", "age.r"] <- overnight_age$p.value
+p.mat["overnight", "white_bin"] <- overnight_white$p.value
+p.mat["overnight", "cells_mL"] <- overnight_mL$p.value
+
+#Batch
+p.mat["batch", "age.r"] <- batch_age$p.value
+p.mat["batch", "white_bin"] <- batch_white$p.value
+p.mat["batch", "cells_mL"] <- batch_mL$p.value
+
+#Age
+p.mat["age.r", "white_bin"] <- age_white$p.value
+p.mat["age.r", "cells_mL"] <- age_mL$p.value
+
+#Race
+p.mat["white_bin", "cells_mL"] <- white_mL$p.value
+
+#heatmap does not like NAs so having a p-value of 1 is pretty much an NA
+p.mat[is.na(p.mat)] <- 1
+
+View(p.mat)
+```
+
+
+# Heatmap of p values
+```{r}
+library(gplots)
+my_palette <- colorRampPalette(c("red", "yellow", "white"))
+heatmap.2(p.mat,
+          trace = "none",
+          dendrogram = "none",
+          Rowv = FALSE, #how should the rows be ordered - leave the order alone
+          Colv = FALSE, #how should the columns be ordered - leave the order alone
+          key = TRUE, keysize = 1.5,
+          col = my_palette,
+          breaks = c(seq(0,0.1,length=100),
+                         seq(0.11,0.2,length=100),
+                         seq(0.21,1, length=100)),
+          margins = c(7, 7))
+
+
+
+```

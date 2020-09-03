@@ -1,0 +1,338 @@
+---
+title: "07-30-19 ENCODE Saliva Merge"
+author: "Lauren Middleton"
+date: "7/30/2019"
+output: html_document
+---
+```{r}
+# Purpose:  Merge the ENCODE, saliva, and Reinius datasets
+#
+# Inputs:   https://bioconductor.org/packages/release/data/experiment/html/FlowSorted.Blood.450k.html
+#           "07-03-19 beta_final.rds" - encode beta matrix
+#           "07-03-19 pd.paper.rds" - descriptives for encode cells
+#           "06-11-19 beta_final_all_samps.rds" - beta matrix of all saliva samples
+#           "06-11-19 pd_final_all_samps.rds" - descriptives for saliva samples
+#           "07-31-19 reineus pd.rds" - descriptives for Reinius
+#           "07-31-19 beta_final_wbc.rds" -  beta matrix of immune cells from Reinius  
+#
+# Outputs:  "07-31-19 reineus pd.qc.rds"
+#           "07-31-19 reineus pd"
+#           "07-31-19 reineus minfi-detP.rda"
+#           "07-31-19 reineus noob.rds"
+#           beta_overlap.rds - beta matrix that includes saliva, encode, and reinius data
+#           PCA plot of all studies
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+```
+
+# Drop cd45- from beta and pd
+```{r}
+head(pd_final_saliva)
+cd45neg_samps <- pd_final_saliva$celltype == "CD45neg"
+cd45neg_samps
+
+pd_final_saliva1 <-  pd_final_saliva[!cd45neg_samps, ]
+table(pd_final_saliva1$celltype)
+pd_final_saliva <- pd_final_saliva1
+
+#drop from beta
+beta_final_saliva1 <- beta_final_saliva[, pd_final_saliva$meth_id]
+identical(pd_final_saliva$meth_id, colnames(beta_final_saliva1))
+beta_final_saliva <- beta_final_saliva1
+rm(beta_final_saliva1)
+
+saveRDS(beta_final_saliva, "06-11-19 beta_final_all_samps.rds")
+```
+
+
+# Load files
+```{r}
+#load the beta matrix - all probe info, rows = probes, columns = samples, data = % methylation;
+beta_final_encode <- readRDS("07-03-19 beta_final.rds")
+
+#this includes the subsetted sample data (demographic data);
+pd_paper_encode <- readRDS("07-03-19 pd.paper.rds")
+
+#Saliva beta final including whole and oragene
+beta_final_saliva <- readRDS("06-11-19 beta_final_all_samps.rds")
+
+#Saliva pd including whole and oragene
+pd_final_saliva <- readRDS("06-11-19 pd_final_all_samps.rds")
+
+#WBC - Reinius et al 2012
+pd_final_wbc <- readRDS("07-31-19 reineus pd.rds")
+beta_final_wbc <- readRDS("07-31-19 beta_final_wbc.rds")
+
+
+#BiocManager::install("FlowSorted.Blood.450k")
+```
+
+
+
+# Find which probes overlap between 450k and 850k
+```{r}
+overlapping_probes <- Reduce(intersect, list(rownames(beta_final_encode), rownames(beta_final_saliva), rownames(beta_final_wbc)))
+length(overlapping_probes) #412112 cuts out about 30,000 probes from 450k
+```
+
+
+# Cut betamatrix to only the ones that intersect -  subsetting to overlapping probes
+```{r}
+#keeps the order of the probes the same
+beta_encode_overlap <- beta_final_encode[overlapping_probes, ]
+beta_saliva_overlap <- beta_final_saliva[overlapping_probes, ]
+beta_wbc_overlap <- beta_final_wbc[overlapping_probes, ]
+dim(beta_saliva_overlap) #412112     60
+dim(beta_wbc_overlap)
+```
+
+
+# Merge the three datasets
+```{r}
+beta_overlap <- cbind(beta_encode_overlap, beta_saliva_overlap, beta_wbc_overlap)
+dim(beta_overlap) #410287    12
+colnames(beta_overlap)
+
+rm(beta_encode_overlap, beta_final_encode, beta_final_saliva, beta_saliva_overlap)
+
+saveRDS(beta_overlap, file = "07-30-19 beta_overlap.rds")
+```
+
+
+# Combine the pds
+```{r}
+beta_overlap <- readRDS("07-30-19 beta_overlap.rds")
+
+
+#make mini pd files with only a few overlapping variables
+pd_saliva_mini <- pd_final_saliva[ , c("meth_id", "celltype", "predicted_sex")]
+pd_encode_mini <- pd_paper_encode[ , c("geo_accession", "Cell.Type", "predicted_sex")]
+pd_wbc_mini <- pd_final_wbc[ , c("Sample_Name", "CellType", "Sex")]
+
+
+#change encode column names to match those from saliva
+colnames(pd_encode_mini) <- colnames(pd_saliva_mini)
+colnames(pd_wbc_mini) <- colnames(pd_saliva_mini)
+head(pd_encode_mini)
+head(pd_saliva_mini)
+head(pd_wbc_mini)
+
+#add study variable to each pd mini
+pd_saliva_mini$study <- c("Saliva")
+pd_encode_mini$study <- c("ENCODE")
+pd_wbc_mini$study <- c("Reineus et al (2012)")
+
+#combine cell types within wbc to only one category
+pd_wbc_mini$celltype <- "wbc"
+pd_wbc_mini$predicted_sex <- "m"
+
+#rbind the datasets together
+pd_mini <- rbind(pd_encode_mini, pd_saliva_mini, pd_wbc_mini)
+pd_mini$celltype <- as.character(pd_mini$celltype)
+table(pd_mini$celltype)
+table(pd_mini$predicted_sex)
+table(pd_mini$study)
+```
+
+
+# Make a PCA of samples from encode/reinius and saliva
+```{r}
+library(ggplot2)
+#this makes the pcs
+prin <- prcomp(t(beta_overlap), center=T, scale.=F)
+
+pc_pd <- merge(pd_mini, prin$x, by.x = "meth_id", by.y = "row.names")
+
+#how much of variance explained by pcs
+screeplot(prin)
+summary(prin) #PC1-7 = 80%
+#                            PC1     PC2      PC3      PC4 
+# Standard deviation     52.9296 30.6800 21.72696 13.45259 
+# Proportion of Variance  0.4786  0.1608  0.08065  0.03092  
+# Cumulative Proportion   0.4786  0.6394  0.72008  0.75100
+
+#based on reineus file:
+proportion <- summary(prin)
+proportion <- proportion$importance["Proportion of Variance", ]
+
+prop_var <- data.frame(PC = names(proportion[1:7]),
+                       Proportion = proportion[1:7])
+
+ggplot(data = prop_var, aes(x = PC, y = Proportion)) +
+  geom_bar(stat = "identity")+ #identity = heights of the bars represent actual data values
+#        ylim(0, 1.0)+ #set y axis limit as 1.0
+        scale_y_continuous(limits=c(0, 1.0), breaks = seq(0, 1.0, 0.1))+
+        theme(axis.title = element_text(size = 20))+
+        theme_minimal()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+
+
+#plot pcs of saliva+encode+wbc data
+```{r}
+library(dplyr)
+#plot comparison of pcs 1-7
+head(pc_pd)
+pairs(pc_pd[, 5:11], col = as.factor(pc_pd$celltype), lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pc_pd$celltype)), fill = as.factor(pc_pd$celltype) %>% as.numeric %>% as.factor %>% levels, title = "Cell Type")
+
+#fix the order of the legend
+table(pc_pd$celltype)
+
+#sets the order
+celltype <- factor(pc_pd$celltype, levels = c("CD45pos", "large", "whole", "oragene",
+                                              "Epithelial",
+                                              "wbc"))
+
+
+#set the colors
+colors <- c("red", "deepskyblue", "purple", "deeppink1",
+            "royalblue4",
+            "tan")
+
+#replot
+# png("07-30-19 PCA all cell types.png", width = 700, height = 500)
+# pairs(pc_pd[, 5:11], col = colors[celltype], lower.panel = NULL)
+# par(xpd = TRUE)
+# legend("bottomleft", legend = c("CD45+", "Large", "Whole", "Epithelial", "WBC"), fill = colors, title = "Cell Type")
+# dev.off()
+
+setwd("~/Research 2019")
+#zoom in on pc1 vs 2
+png("07-30-19 PC1v2 all cell types.png", width = 1000, height = 700)
+plot(pc_pd$PC2,
+     pc_pd$PC1,
+     col = colors[celltype],
+     pch = 16,
+     cex = 2,
+     cex.axis = 2)
+par(xpd = TRUE)
+# legend("topleft", legend = c("Saliva Immune", "Saliva Epithelial", "Saliva Whole", "Oragene",
+#                              "ENCODE Epithelial",
+#                              "Reinius Immune"), fill = colors, title = "Cell Type")
+dev.off()
+```
+
+# Color by study
+```{r}
+png("07-30-19 PCA saliva-encode-wbc.png", width = 700, height = 500)
+colors <- c("forestgreen", "gold", "deeppink2")
+pairs(pc_pd[, 5:11], col = colors[as.factor(pc_pd$study)], lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pc_pd$study)),
+       fill = colors,
+       title = "Study")
+dev.off()
+
+pdf("07-30-19 PCA saliva-encode-wbc.pdf", width = 700, height = 500)
+colors <- c("forestgreen", "gold", "deeppink2")
+pairs(pc_pd[, 5:11], col = colors[as.factor(pc_pd$study)], lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pc_pd$study)),
+       fill = colors,
+       title = "Study")
+dev.off()
+```
+
+
+# epidish exploration
+```{r}
+library(EpiDISH)
+data(centEpiFibIC.m)
+colnames(centEpiFibIC.m)
+rownames(centEpiFibIC.m)[1:5]
+head(centEpiFibIC.m)
+dim(centEpiFibIC.m) #716 3
+```
+
+
+# which probes are the 716 - updated 06/09/20
+```{r}
+# Load files and library/data
+#beta matrix of QC'd data from Zheng et al - EpiDISH
+beta_final_encode <- readRDS("07-03-19 beta_final.rds")
+#beta matrix of QC'd data from saliva samples (includes whole/oragene)
+beta_final_saliva <- readRDS("06-11-19 beta_final_all_samps.rds")
+#beta matrix of QC'd data from Reinius et al - Immune cells
+beta_final_wbc <- readRDS("07-31-19 beta_final_wbc.rds")
+#Salvia pd including whole and oragene
+pd_final_saliva <- readRDS("06-11-19 pd_final_all_samps.rds")
+library(EpiDISH)
+data("centEpiFibIC.m")
+
+
+# Make datasets of probes that are in both the beta matrices and the epidish prediction method
+dim(beta_final_encode) #There are 441772 probes in the epidish beta matrix
+#make a beta matrix of probes that are in the epidish beta matrix and the ones used to predict cell proportions
+beta_encode_epifibic <- intersect(rownames(beta_final_encode), rownames(centEpiFibIC.m))
+length(beta_encode_epifibic) #698 of the 716 probes are in the epidish beta matrix
+#make a beta matrix of probes that are in the saliva beta matrix and epidish package
+beta_saliva_epifibic <- intersect(rownames(beta_final_saliva), rownames(centEpiFibIC.m))
+length(beta_saliva_epifibic) #666 of the 716 probes are in the saliva beta matrix
+#make a beta matrix of probes that are in the Reinius beta matrix and epidish package
+beta_wbc_epifibic <- intersect(rownames(beta_final_wbc), rownames(centEpiFibIC.m)) 
+length(beta_wbc_epifibic) #704 / 716
+
+#keeps the order of the probes the same - grab only these probes
+beta_encode__epifibic_overlap <- beta_final_encode[beta_encode_epifibic, ]
+dim(beta_encode__epifibic_overlap) #698 18
+
+#pull the 666 probes from the overlapping saliva and epidish datasets and make them into a matrix of rows = probes, columns = 60 saliva samples
+beta_saliva_epifibic_overlap <- beta_final_saliva[beta_saliva_epifibic, ]
+setwd("C:/Users/HP/Documents/Research 2019")
+write.csv(beta_saliva_epifibic_overlap, "saliva_epidish_overlap.csv")
+
+#pull the same "716" probes from wbc
+beta_wbc_epifibic_overlap <- beta_final_wbc[beta_wbc_epifibic, ]
+
+#plot density plot of each
+library(minfi)
+identical(pd_final_saliva$meth_id, colnames(beta_saliva_epifibic_overlap))
+png("07-30-19 saliva density probe encode subset.png")
+densityPlot(beta_saliva_epifibic_overlap, sampGroups = pd_final_saliva$celltype)
+dev.off() #saliva
+densityPlot(beta_encode__epifibic_overlap, sampGroups = pd_final_encode$celltype) #encode
+```
+
+
+# Test for associations between pcs and variables - these numbers are old-(8/5/20)
+```{r}
+#RUN COMBINE THE PDS SECTION FIRST
+
+#this makes the pcs
+prin <- prcomp(t(beta_overlap), center=T, scale.=F)
+pc_pd <- merge(pd_mini, prin$x, by.x = "meth_id", by.y = "row.names")
+#pc_pd has the PCs and celltype/study columns
+
+#Study and celltype vs PC1 and PC2
+cat_vars <- c("celltype", "study")
+corr_categ_pc1 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_pd$PC1 ~ pc_pd[,var]))
+})
+corr_categ_pc2 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_pd$PC2 ~ pc_pd[,var]))
+})
+corr_categ_pc3 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_pd$PC3 ~ pc_pd[,var]))
+})
+
+#PC1:
+corr_categ_pc1
+corr_categ_pc1[[1]]$'Pr(>F)'
+#cell type is associated with PC1 (p=1.8e-50)
+#study is also associated with PC1 (p=4.3e-27)
+
+#PC2:
+corr_categ_pc2
+#cell type is associated with PC2 (p=2.3e-51)
+#same for study (p=6.1e-48)
+
+#PC3:
+#also associated, celltype associated with PC4
+```

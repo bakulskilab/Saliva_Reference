@@ -1,0 +1,1127 @@
+---
+title: "ENCODE preprocess"
+author: "Lauren Middleton"
+date: "7/2/2019"
+output: html_document
+---
+```{r}
+# Purpose:  QC the ENCODE data and generate a beta matrix for analysis
+#
+# Inputs:   meth <- "07-02-19 ENCODE ewastools-meth.rds"
+#           RGset <- "07-02-19 ENCODE RGset.rds"
+#           pd.encode <- "07-02-19 pd.encode.rds"
+#           pd <- "07-02-19 ENCODE pd.reduced.rds" - generated in code 5.0
+#
+# Outputs:  "07-03-19 beta_final.rds" - beta matrix of encode/epidish cell types
+#           "07-03-19 pd.paper.rds" - description of those cell types
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+```
+
+```{r}
+#load 06-25-19 ENCODE idats Environment.R
+
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#n    install.packages("BiocManager")
+
+#BiocManager::install("IlluminaHumanMethylation450kmanifest")
+#BiocManager::install("IlluminaHumanMethylation450kanno.ilmn12.hg19")
+```
+
+# The meth and RGSet files were saved as:
+```{r}
+#saveRDS(meth,file="07-02-19 ECODE ewastools-meth.rds")
+#saveRDS(RGset,file="07-02-19 ENCODE RGset.rds")
+#pd<-pData(RGset) #this code extracts phenotype information from an RGset, using a function from minfi
+#pData(RGset)<-pd # this code applies a new phenotype table to the RGset
+
+meth <- readRDS("07-02-19 ENCODE ewastools-meth.rds")
+RGset <- readRDS("07-02-19 ENCODE RGset.rds")
+pd.encode <- readRDS("07-02-19 pd.encode.rds")
+pd <- readRDS("07-02-19 ENCODE pd.reduced.rds")
+```
+
+
+# Load the librarys
+```{r}
+library(ewastools)
+library(minfi)
+library(magrittr)
+```
+
+
+# Calculate QC metrics based on Illumina Guide
+```{r}
+#this has all of the control metrics for the array
+ctrl.metrics <- control_metrics(meth)
+
+#make a PDF of the control metric graphs
+pdf("07-03-19 control_metrics.pdf")
+
+for(metric in names(ctrl.metrics)) {
+  stripchart(ctrl.metrics[[metric]],
+             method = "jitter",
+             pch = 4, #symbol for points
+             xlab=metric)
+  abline(v = attr(ctrl.metrics[[metric]],
+                  "threshold"),
+                  col=2, #this makes the line red
+                  lty=3) } #this makes the line type dotted
+dev.off()
+
+
+#plot only one control metric at a time and set xlim
+#https://hhhh5.github.io/ewastools/articles/exemplary_ewas.html
+#staining red metric
+stripchart(ctrl.metrics$"Staining Red",
+           method="jitter",
+           pch = 4,
+           xlab = "Staining Red",
+           xlim = c(0, 1500))
+abline(v = 5, col = 2, lty = 3) #lty = line type
+
+#staining green metric
+stripchart(ctrl.metrics$"Staining Green",
+           method="jitter",
+           pch = 4,
+           xlab = "Staining Green",
+           xlim = c(0, 2500))
+abline(v = 5, col = 2, lty = 3)
+
+#extension green metric
+stripchart(ctrl.metrics$"Extension Green",
+           method = "jitter",
+           pch = 4,
+           xlab = "Extension Green",
+           xlim = c(0, 100))
+abline(v = 5, col = 2, lty = 3)
+```
+
+
+# Flag ctrl.metrics for any metric threshold fail
+```{r}
+#flag failures as TRUE if they fail on any of the 17 control metrics
+fail.flag <- sample_failure(ctrl.metrics)
+class(fail.flag) #logical
+table(fail.flag) #2 failed, 60 passed out of 62 total samples
+
+
+#FIGURE OUT WHICH SAMPLES FAILED AND ON WHICH METRICS
+#WERE THESE FAILS BAD ENOUGH OR FINE
+
+pd.flag1 <- pd.encode #this is still fine
+colnames(RGset)
+```
+
+
+#Make a separate dataset with specific columns: geo_accession, source_name_ch1,
+# characteristics_ch1.6-9
+```{r}
+cell_line_details <- pd.flag1[, c("geo_accession",
+                                 "source_name_ch1",
+                                 "characteristics_ch1.6",
+                                 "characteristics_ch1.7",
+                                 "characteristics_ch1.8",
+                                 "characteristics_ch1.9")]
+
+#remove "cell description: " from characteristics_ch1.6
+cell_line_details$cell_description <- gsub("cell description: ",
+                          replacement = "",
+                          x = cell_line_details$characteristics_ch1.6)
+
+#manually check dataset to make sure "cell description: " was removed
+  #yes
+
+#remove old characteristics_ch1.6 column
+colnames(cell_line_details)
+cell_line_details <- cell_line_details[-c(3)]
+colnames(cell_line_details)
+
+#export formatted dataset
+#write.csv(cell_line_details, "07-02-19 ENCODE cell lines.csv")
+```
+
+
+# START HERE: load in "07-02-19 ENCODE preprocess Environment"
+```{r}
+#pd.flag has geo_accession which has all 62 samples in the format of GSM######
+#sample_id in meth is under meta and starts with GSM######, but has extra words after it
+
+#make a meth dataset that has sample_id with only the GSM###### as the ID
+colnames(meth) #NULL
+rownames(pd) # sample 62: "GSM999396_hg19_wgEncodeHaibMethyl450U87SitesRep1"
+identical(colnames(meth), rownames(pd)) #FALSE
+head(meth$meta$sample_id) #"GSM999335_hg19_wgEncodeHaibMethyl450SkmcSitesRep1"
+
+
+# pd$meth_id <- gsub('_Grn.idat.gz','',pd$meth_id)
+# head(pd$meth_id)
+meth_gsm <- gsub('_hg19_wgEncodeHaibMethyl450.*', '', meth$meta$sample_id)
+head(meth_gsm)
+
+#add meth_gsm into meth dataset
+meth$meta$gsm <- meth_gsm
+
+#reorder the datasets so the orders match up by GSM
+pd.flag <- pd.flag1[match(meth$meta$gsm, pd.flag1$geo_accession), ]
+
+#save intial flag.fail 
+pd.flag$control_probe_flag <- fail.flag
+head(pd.flag)
+```
+
+
+# Flag for specific metric threshold fail
+```{r}
+#Which specific metrics fail
+failed <- sapply(ctrl.metrics, function(metric) {
+  metric < attr(metric, "threshold") 
+})
+
+#replace characters like spaces with underscores in failed
+colnames(failed) %<>% gsub(' |/|-', '_', .)
+head(failed) #now R won't break from spaces in column labels
+
+#combine pd.flag and failed by columns
+head(pd.flag)
+head(failed)
+pd.flag <- cbind(pd.flag, failed)
+head(pd.flag)
+```
+
+
+# Counts of flagged samples
+```{r}
+#turned failed dataset into a data frame
+class(failed) #matrix
+failed %<>% data.frame()
+class(failed) #data.frame
+
+#add fail.flag as a new column called Any into failed dataset
+failed$Any <- fail.flag
+
+#count the column sums from failed
+counts <- colSums(failed, na.rm = TRUE)
+counts
+
+#make a csv file of the control flag counts - metrics that failed
+write.csv(counts, file = "07-03-19 ENCODE control.flag.counts.csv")
+
+#there were 0 flagged samples and 2 as Any - Any means 2 samples failed
+```
+
+
+# Which samples were flagged
+```{r}
+#from pd.flag, combine geo_accession with failed
+# samp.flag <- pd.flag[pd.flag$control_probe_flag,c('Sample.ID',colnames(failed)[-18])]
+colnames(failed) #18 doesn't exist so I'm going to ignore that piece
+
+#colnames of failed are the control metrics
+samp.flag <- pd.flag[pd.flag$control_probe_flag, c('geo_accession', colnames(failed)[-18])]
+#samples GSM999339 and GSM999368 were flagged - hepatocyte and prostate adenocarcinoma
+
+samp.flag <- t(samp.flag)
+samp.flag
+
+write.csv(samp.flag, file = "07-03-19 ENCODE control_probe_flagged_samples.csv")
+
+#rm(ctrl.metrics, fail.flag, failed, metric, counts)
+samp.flag <- read.csv(file = "07-03-19 ENCODE control_probe_flagged_samples.csv")
+```
+
+
+# Correct for dye bias, check that the datasets line up
+```{r}
+meth %<>% correct_dye_bias()
+
+
+#check pd file lines up with meth object again
+rownames(pd.flag) <- pd.flag$geo_accession
+identical(rownames(pd.flag),meth$meta$gsm) #TRUE
+```
+
+
+# Sex checks
+```{r}
+#X and Y normalized intensities
+pd.sex <- pd.flag
+
+#make 2 new columns for X and Y
+pd.sex[ ,c('X', 'Y')] <- check_sex(meth) #this gives X and Y median intensities
+head(pd.sex[ ,c('X', 'Y')])
+```
+
+
+```{r}
+#sexes of cell lines based on pd.flag data
+sex <- c("u", "u", "f", "m", "u", "f", "f", "m", "u", "m", "m", "u", "f", "f", "m", "m", "m", "m", "f", "m", "u", "u", "u", "f", "f", "u", "u", "u", "u", "u", "m", "f", "m", "m", "u", "f", "m", "m", "f", "f", "m", "f", "f", "u", "m", "u", "u", "u", "m", "u", "u", "f", "m", "f", "f", "u", "u", "f", "f", "u", "m", "f")
+pd.sex$sex <- sex
+colnames(pd.sex)
+
+#predicted sex
+pd.sex$predicted_sex <- predict_sex(X = pd.sex$X, Y = pd.sex$Y,
+                                    male = which(pd.sex$sex == 'm'),
+                                    female = which(pd.sex$sex == 'f'))
+                                    #unknown = which(pd.sex$sex == "u"))
+
+table(pd.sex$predicted_sex, pd.sex$sex)
+  #    f  m  u
+  # m  1 16 14
+  # f 14  0  8
+
+
+
+#which was NA or predicted sex doesn't match with data, only print specific columns
+View(pd.sex[is.na(pd.sex$predicted_sex) | pd.sex$sex !=
+         pd.sex$predicted_sex,c('geo_accession','sex','predicted_sex', "characteristics_ch1.7", "characteristics_ch1.8", "characteristics_ch1.9")])
+#predicted sex is based on data, sex is based on annotation
+#999358 = bronchial epithelial cells predict as M, written as F
+```
+
+
+# Plot predicted sex
+```{r}
+#red means predicted doesn't match with annotated including unknowns(NA)
+  #if F, plot a circle etc - this is setting up the shapes
+  tch <- ifelse(is.na(pd.sex$predicted_sex), 0, #if NA, plot a square
+                ifelse(pd.sex$predicted_sex == "f", 1, 4)) #if F, plot circle; if M, plot X
+
+pdf("07-02-19 sex_plot_ewastools.pdf")
+  #plot X vs Y
+  plot(Y ~ X, data = pd.sex,
+       pch = tch, asp = 1,
+      xlab = "Normalized X chromosome intensities",
+      ylab = "Normalized Y chromosome intensities",
+      ylim = c(0, 1.0),
+      cex.lab = 1.3)
+  #diff = NA or mismatch
+  diff <- pd.sex[is.na(pd.sex$predicted_sex) | pd.sex$sex != pd.sex$predicted_sex,]
+  #plots red mismatches or NA on top of previous points
+  tch.diff <- ifelse(is.na(diff$predicted_sex), 0, 
+                     ifelse(diff$predicted_sex == "f", 1, 4))
+  points(Y ~ X, data = diff,
+         pch = tch.diff,
+         col = 2) #this makes it red ontop of plot
+  legend("topright", title = "Predicted Sex", pch = c(1,4,0),legend = c("Female", "Male", "Unassigned"))
+  legend("topleft", c("Sex match", "Sex mismatch"), fill = c("black", "red"))
+  #text labels the points with their GSM ID
+  #text(Y ~ X, labels = pd.sex$geo_accession, data = pd.sex)
+dev.off()
+```
+
+
+#Color sex chart by cancer status of the cell line
+```{r}
+#first merge ENCODE cell lines dataset from csv file to pd.sex
+cell_lines <- read.csv("07-02-19 ENCODE cell lines.csv")
+pd.demog <- merge(pd.sex, cell_lines, by = "geo_accession")
+dim(pd.demog) #62, 100
+
+
+pdf("07-02-19 sex_cancer_plot_ewastools.pdf")
+  #if F, plot a circle etc - this is setting up the shapes
+  tch <- ifelse(is.na(pd.demog$predicted_sex), 0,
+                ifelse(pd.demog$predicted_sex == "f", 1, 4))
+  #plot X vs Y
+  plot(Y ~ X.x, data = pd.demog,
+       pch=tch,
+       asp=1,
+       xlab="Normalized X chromosome intensities",
+       ylab="Normalized Y chromosome intensities",
+       cex.lab = 1.3,
+       col = ifelse(is.na(pd.demog$Karyotype), 3,
+                    ifelse(pd.demog$Karyotype == "Cancer", 2, 1)))
+  legend("topright", title = "Predicted Sex",
+         pch = c(1, 4, 0),
+         legend = c("Female", "Male", "Unassigned"))
+  legend("topleft", legend = c("Cancer", "Normal", "Other Disease"),
+         fill = c("red", "black", "green"))
+dev.off()
+
+
+
+saveRDS(pd.demog, file = "07-02-19 pd.demog.rds")
+
+#saved Environment at this point
+```
+
+
+## Load "07-02-19 ENCODE preprocess Environment2.R"
+# Detection p
+```{r}
+#"This function identifies failed positions defined as both the methylated and unmethylated channel reporting background signal levels."
+#need to tell R to use ewastools to run this or else it gets confused because minfi and ewastools have detectionP packages that are called the exact same thing...
+detP <- readRDS("07-03-19 detP.rds")
+
+detP <- ewastools::detectionP(meth)
+
+#make a dataset called ewastools.detP from detP on meth dataset
+ewastools.detP <- detP$detP
+
+#make a dataset called samps from the gsm names in meth
+#this is the names of the samples
+samps <- meth$meta$gsm
+samps
+
+#make a dataset called probes from the manifest$probe_id in detP/meth
+probes <- detP$manifest$probe_id
+
+colnames(ewastools.detP) <- samps
+rownames(ewastools.detP) <- probes
+print(ewastools.detP[1:6, 1:6])
+
+# Instead, load the environment if you need detP, ewastools.detP, meth, probes, samps, pd.demog
+#save(ewastools.detP, file = "07-03-19 ENCODE ewastools.detP.rda")
+# load("07-03-19 ENCODE ewastools.detP.rda")
+
+table(pd.demog$Cell.Sex, pd.demog$predicted_sex, exclude = NULL)
+  #       m  f <NA>
+  # F     1 14    6
+  # M    19  0    3
+  # <NA> 11  8    0
+
+
+pdf("07-03-19 ENCODE detP_eval_ewastools.pdf")
+  #this is not supposed to look like this, but could be due to the cancer cell lines
+  eval_detP_cutoffs(detP, males = which(pd.demog$Cell.Sex == "M"),
+                          females = which(pd.demog$Cell.Sex == "F"))
+  #this is supposed to check if the mismatches change the graph
+  #0.05 or 0.01 is a good cutoff for detP based on this graph
+  #this plots only the lines used in the paper
+  eval_detP_cutoffs(detP, females = which(pd.demog$predicted_sex == "f" & pd.demog$geo_accession %in% pd.paper$geo_accession),
+                          males = which(pd.demog$predicted_sex == "m" & pd.demog$geo_accession %in% pd.paper$geo_accession))
+dev.off()
+```
+
+
+# Assign sex based on X and Y graph
+```{r}
+x_assigned <- ifelse(pd.sex$Y > 0.4, "M", "F")
+pd.sex$x_assigned <- x_assigned
+
+#check if the symbols are now all assigned
+  tch <- ifelse(is.na(x_assigned), 0,
+                ifelse(x_assigned == "F", 1, 4))
+  #plot X vs Y
+  plot(Y ~ X, data = pd.sex,
+       pch=tch,
+       asp=1,
+       xlab="Normalized X chromosome intensities",
+       ylab="Normalized Y chromosome intensities",
+       cex.lab = 1.3,
+       col = ifelse(is.na(pd.demog$Karyotype), 3,
+                    ifelse(pd.demog$Karyotype == "Cancer", 2, 1)))
+  legend("topright", title = "Predicted Sex",
+         pch = c(1, 4, 0),
+         legend = c("Female", "Male", "Unassigned"))
+  legend("topleft", legend = c("Cancer", "Normal", "Other Disease"),
+         fill = c("red", "black", "green"))
+
+```
+
+# remake detP based on assigned sexes
+```{r}
+library(ewastools)
+#this is based on assigned sexes
+#0.05 or 0.01 is a good cutoff for detP based on this graph
+  eval_detP_cutoffs(detP, males = which(pd.sex$x_assigned == "M"),
+                          females = which(pd.sex$x_assigned == "F"))
+  #this is based on predicted sexes
+  #0.05 or 0.01 is a good cutoff for detP based on this graph
+  eval_detP_cutoffs(detP, males = which(pd.demog$predicted_sex == "m"),
+                          females = which(pd.demog$predicted_sex == "f"))
+```
+
+
+
+# Failed samples based on detP
+```{R}
+failedP <- ewastools.detP > 0.05
+
+#Fraction of failed positions per sample
+per.samp <- colMeans(failedP, na.rm=T) 
+summary(per.samp)
+#     Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
+#0.0005272 0.0009753 0.0015015 0.0054201 0.0024253 0.1729767 
+
+#Fraction of failed samples per position
+per.probe <- rowMeans(failedP, na.rm=T) 
+summary(per.probe)
+#    Min.  1st Qu.   Median     Mean  3rd Qu.     Max. 
+#0.000000 0.000000 0.000000 0.005421 0.000000 0.838710 
+
+#How many samples had more than 10% of sites fail?
+sum(per.samp > 0.1) # 1
+length(per.samp) #62
+colnames(per.samp) #NULL
+#since there are no sample names in per.samp, assign names from "samps"
+names(per.samp) <- samps
+per.samp
+
+#who are you
+which(per.samp > 0.1)
+per.samp[5] #GSM999339, 0.1729767
+#this was the same primary hepatocytes
+
+
+#How many positions failed >5% samples
+sum(per.probe > 0.05, na.rm=T) 
+# 6,612
+
+pdf("07-03-19 ENCODE detP-hist.pdf")
+  #Fraction of Failed Positions Per Sample
+  hist(per.samp,breaks=20,
+       xlab='Fraction of Failed Positions Per Sample',
+       main='All Samples')
+  #Samples with <5% Failed Probes - 
+  hist(per.samp[per.samp<0.05],
+       breaks=40,
+       xlab='Fraction of Failed Positions Per Sample',
+       main='Samples with <5% Failed Probes')
+  #Fraction of Failed Samples Per Position
+  hist(per.probe,breaks=20,
+       xlab='Fraction of Failed Samples Per Position',
+       main='All Probes')
+  #Fraction of Failed Samples Per Position < 30% - zooms into left side
+  hist(per.probe[per.probe<0.3],
+       breaks=60,
+       xlab='Fraction of Failed Samples Per Position',
+       main='Probes with <30% Sampled Failed')
+dev.off()
+
+which(per.samp > 0.02) #aortic smooth muscle GSM356
+```
+
+```{r}
+# save(per.probe,file='ewastools_per_probe_fail_rate.rds')
+pd.detp <- pd.sex
+
+#this is adding a new var of % probes fail per sample onto pd.detp
+#this is adding the previous info from the section above into pd.detp
+#rownames makes sure per.samp will be ordered the same as pd.detp
+pd.detp$ew_probe_fail_pct <- per.samp[rownames(pd.detp)]
+rownames(pd.detp)
+# save(pd.detp,file='pd.detp.rds')
+
+rm(ewastools.detP,failedP,per.probe,per.samp,probe.fail,probes,samps, detP)
+```
+
+
+# Genotype calling
+```{r}
+#don't normalize the beta values from meth
+#simplifies meth dataset - speeds up the code
+beta <- dont_normalize(meth)
+
+#snp probes labeled as rs
+snps <- meth$manifest[probe_type == 'rs', index]
+
+#dataset of only snp probes
+snps <- beta[snps, ]
+
+#this says which bases correspond
+genotypes <- call_genotypes(snps, learn=FALSE)
+#saveRDS(genotypes, file = "07-03-19 called-genotypes.rds")
+#genotypes <- readRDS('called-genotypes.rds')
+```
+
+
+# Do some checking
+```{r}
+#double check ordering
+identical(colnames(genotypes$snps), rownames(pd.detp)) #FASLE
+colnames(genotypes$snps) <- substring(colnames(genotypes$snps), 1, 9)
+identical(colnames(genotypes$snps), rownames(pd.detp)) #TRUE
+
+#check agreement of samples from same person based on snps
+check.snp <- check_snp_agreement(genotypes, donor_ids = pd.detp$geo_accession,
+                                 sample_ids = pd.detp$geo_accession)
+# check.snp #PASTE THIS INTO THE CONSOLE
+
+
+
+pdf("07-03-19 ENCODE SNP Agreement.pdf")
+ewastools:::agreement_(genotypes, pd.detp$geo_accession, pd.detp$geo_accession)
+dev.off()
+```
+
+# There are 4 pairs of cell lines that agree
+## One pair is used in the paper - are these unique cell lines from 1 person or a duplicate?
+```{r}
+#GSM999378 and GSM999384
+#SNPs fully agree with each other - do the methylation profiles agree?
+
+#better to look at this once beta matrix has been made
+#see line 801
+```
+
+
+# ____________________________________________________________________________________________________
+# Checks with minfi - set up libraries
+```{r}
+library(minfi)
+library(magrittr)
+library(IlluminaHumanMethylation450kmanifest)
+```
+
+# Load files
+```{r}
+RGset <- readRDS("07-02-19 ENCODE RGset.rds")
+```
+
+# Overall intensity: M vs. U
+```{r}
+#pulling methylated and unmeth intensities from red and green intensities
+rawMSet <- preprocessRaw(RGset)
+
+dim(rawMSet) #dim: 485512 62, rownames are probes, colnames are samples
+
+#M signal per probe, per sample
+Meth <- getMeth(rawMSet)
+Meth[1:5,1:5]
+
+#U signal per probe, per sample
+Unmeth <- getUnmeth(rawMSet)
+Unmeth[1:5,1:5]
+
+MQC <- log2(colMedians(Meth))
+UQC <- log2(colMedians(Unmeth))
+
+intensities <- data.frame(meth_id = colnames(Meth), MQC=MQC, UQC=UQC)
+head(intensities) #need to shorten meth_id to match gsm
+head(pd.demog) #has geo_accession
+
+#cut off the ending of meth_id to make gsm in intensities
+intensities_gsm <- gsub('_hg19_wgEncodeHaibMethyl450.*', '', intensities$meth_id)
+head(intensities_gsm)
+intensities$meth_id <- intensities_gsm
+
+#merge intensities into pd.demog
+pd.beta <- merge(pd.demog, intensities, by.x = "geo_accession", by.y = "meth_id")
+head(pd.beta)
+pd.beta$Karyotype
+```
+
+
+# Set up for plot of M vs U
+```{r}
+#replace all NAs in Karyotype with Other
+Karyotype <- ifelse(is.na(pd.beta$Karyotype), "Other", as.character(pd.beta$Karyotype))
+table(Karyotype)
+
+#add Karyotype to pd.beta
+pd.beta$Karyotype <- Karyotype
+
+# Look at Cancer var
+pd.beta$Karyotype <- as.factor(pd.beta$Karyotype)
+class(pd.beta$Karyotype)
+```
+
+
+# Plot M vs U for all cell lines (n = 62)
+```{r}
+library(RColorBrewer)
+myColors <- brewer.pal(3, "Set1")
+
+pdf("07-03-19 M vs U plot - all cell lines.pdf")
+palette(myColors)
+plot(pd.beta$UQC,
+     pd.beta$MQC,
+     col = pd.beta$Karyotype,
+     main = "M vs. U QC by Cancer Status",
+     pch=16,
+     xlab="Log2 Median Unmethylated Intensity",
+     ylab="Log2 Median Methylated Intensity",
+     cex.lab=1.2,
+     cex.main=2)
+legend("topleft", levels(pd.beta$Karyotype), fill = myColors)
+dev.off()
+
+
+pdf("07-03-19 M vs U plot - all cell lines labeled.pdf")
+palette(myColors)
+plot(pd.beta$UQC,
+     pd.beta$MQC,
+     col = pd.beta$Karyotype,
+     main = "M vs. U QC by Cancer Status",
+     pch=16,
+     xlab="Log2 Median Unmethylated Intensity",
+     ylab="Log2 Median Methylated Intensity",
+     cex.lab=1.2,
+     cex.main=2)
+legend("topleft", levels(pd.beta$Karyotype), fill = myColors)
+text(pd.beta$UQC, pd.beta$MQC, labels = pd.beta$geo_accession, pos=4, cex=0.6)
+dev.off()
+
+pdf("07-03-19 M vs U plot - all cell lines predicted_sex.pdf")
+palette(myColors)
+plot(pd.beta$UQC,
+     pd.beta$MQC,
+     col = pd.beta$predicted_sex,
+     main = "M vs. U QC by Predicted Sex",
+     pch=16,
+     xlab="Log2 Median Unmethylated Intensity",
+     ylab="Log2 Median Methylated Intensity",
+     cex.lab=1.2,
+     cex.main=2)
+legend("topleft", levels(pd.beta$predicted_sex), fill = myColors)
+
+dev.off()
+```
+
+# Include only the normal epithelial cell types (remove fibroblasts)
+```{r}
+head(pd.beta$Cell.Line)
+pd.paper <- pd.beta[pd.beta$Cell.Line %in% c("HIPEpiC",
+                                             "SAEC",
+                                             "HRE",
+                                             "HAEpiC",
+                                             "HRPEpiC",
+                                             "PrEC",
+                                             "HEEpiC",
+                                             "HCPEpiC",
+                                             "HNPCEpiC",
+                                             "HMEC",
+                                             "HRCEpiC"
+                                             # ,
+                                             # "IMR90",
+                                             # "ProgFib",
+                                             # "AG04449",
+                                             # "AG09319",
+                                             # "AG04450",
+                                             # "BJ",
+                                             # "NHDF-neo"
+                                             )
+                    , ]
+```
+
+
+# Plot M vs U (methylated, unmethylated) of only cell lines used in paper
+```{r}
+library(RColorBrewer)
+myColors <- brewer.pal(3, "Set1")
+
+pdf("07-03-19 M vs U plot - paper cell lines.pdf")
+palette(myColors)
+plot(pd.paper$UQC,
+     pd.paper$MQC,
+     col = pd.paper$Karyotype,
+     main = "M vs. U QC by Cancer Status",
+     pch=16,
+     xlab="Log2 Median Unmethylated Intensity",
+     ylab="Log2 Median Methylated Intensity",
+     cex.lab=1.2,
+     cex.main=2)
+legend("topleft", levels(pd.paper$Karyotype), fill = myColors)
+dev.off()
+
+
+pdf("07-03-19 M vs U plot - paper cell lines - predicted_sex.pdf")
+palette(myColors)
+plot(pd.paper$UQC,
+     pd.paper$MQC,
+     col = pd.paper$predicted_sex,
+     main = "M vs. U QC by Predicted Sex",
+     pch=16,
+     xlab="Log2 Median Unmethylated Intensity",
+     ylab="Log2 Median Methylated Intensity",
+     cex.lab=1.2,
+     cex.main=2)
+legend("topleft", levels(pd.paper$predicted_sex), fill = myColors)
+dev.off()
+
+
+pdf("07-03-19 M vs U plot - paper cell lines by Cancer - labeled.pdf")
+palette(myColors)
+plot(pd.paper$UQC,
+     pd.paper$MQC,
+     col = pd.paper$Karyotype,
+     main = "M vs. U QC by Cancer Status",
+     pch=16,
+     xlab="Log2 Median Unmethylated Intensity",
+     ylab="Log2 Median Methylated Intensity",
+     cex.lab=1.2,
+     cex.main=2)
+legend("topleft", levels(pd.paper$Karyotype), fill = myColors)
+text(pd.paper$UQC, pd.paper$MQC, labels = pd.paper$geo_accession, pos=4, cex=0.6)
+dev.off()
+```
+
+# Make the density plot colored by cancer
+```{r}
+#Raw density plot
+beta.raw <- getBeta(rawMSet)
+
+pdf("07-03-19 Density plot - Raw - all.pdf")
+  densityPlot(beta.raw,
+              sampGroups = pd.beta$Karyotype,
+              main="Raw Beta by Normal/Cancer/Other",
+              xlim = c(0.0, 1.2),
+              ylim = c(0.0, 5))
+dev.off()
+
+
+#rm(beta.raw, intensities, Meth, MQC, Unmeth, UQC, slide, rawMSet, pd.int)
+```
+
+
+# Subset out only the beta.raw cell lines
+```{r}
+#change the labels of the columns
+
+colnames(beta.raw)
+
+#cut off the ending of meth_id to make gsm in intensities
+raw_gsm <- gsub('_hg19_wgEncodeHaibMethyl450.*', '', colnames(beta.raw))
+head(raw_gsm)
+colnames(beta.raw) <- raw_gsm
+identical(colnames(beta.raw), pd.beta$geo_accession) #TRUE
+
+#subset out beta.raw to only include values for cell lines in pd.paper
+beta.paper <- beta.raw[, pd.paper$geo_accession]
+dim(beta.paper) #485512     11
+```
+
+
+# make density plot of only cell lines from paper
+```{r}
+pdf("07-03-19 Density plot - Raw - paper.pdf")
+  densityPlot(beta.paper,
+              sampGroups = pd.paper$Karyotype,
+              main="Raw Beta by Normal/Cancer/Other",
+              xlim = c(0.0, 1.2),
+              ylim = c(0.0, 4))
+dev.off()
+
+table(pd.paper$predicted_sex)
+
+#who is the weird wavy line
+densityPlot(beta.paper,
+              sampGroups = pd.paper$predicted_sex,
+              main="Raw Beta by Predicted Sex",
+              xlim = c(0.0, 1.2),
+              ylim = c(0.0, 4))
+#one of the 5 females
+
+#subset out only the female cell lines - from pd first
+pd.female <- pd.paper[pd.paper$predicted_sex == "f", ]
+
+#subset out the beta.paper as well
+beta.female <- beta.raw[, pd.female$geo_accession]
+dim(beta.female)
+
+pdf("07-03-19 Density plot - raw - female only")
+densityPlot(beta.female,
+              sampGroups = as.character(pd.female$Cell.Line),
+              main="Raw Beta by Predicted Sex",
+              xlim = c(0.0, 1.2),
+              ylim = c(0.0, 4))
+dev.off()
+```
+
+```{r}
+rm(beta.agree, beta.female, cell_lines, pd.female, pd.agree, pd.demog, pd.sex, pd.demog)
+
+# save these files:
+saveRDS(pd.paper, file = "07-03-19 pd.paper.rds")
+saveRDS(detP, file = "07-03-19 detP.rds")
+saveRDS(per.probe, file = "07-03-19 per.probe.rds")
+rm(pd.paper, detP, per.probe)
+```
+
+
+
+# ____________________________________________________________________________________________________
+# Load "07-03-19 ENCODE preprocess Environment3.R"
+```{r}
+pd.paper <- readRDS("07-03-19 pd.paper.rds")
+detP <- readRDS("07-03-19 detP.rds")
+per.probe <- readRDS("07-03-19 per.probe.rds")
+RGset <- readRDS("07-02-19 ENCODE RGset.rds")
+
+# Load "07-02-19 ENCODE preprocess Environment3.R"
+```
+
+
+# Run noob correction
+```{r}
+library(IlluminaHumanMethylation450kmanifest)
+
+noob <- preprocessNoob(RGset, offset=15, dyeCorr=TRUE, verbose = TRUE)
+
+rm(RGset)
+
+#this has all the probes and all samples
+beta <- getBeta(noob)
+dim(beta) #485512     62
+```
+
+
+# Check if the methylation profiles from the two cell lines that agreed are the same
+```{r}
+# this is a continuation from line 524
+#compare density lines for GSM999378 and GSM999384
+
+#subset out the cell lines that agree with each other - from pd first
+#also include one that doesn't agree for comparison
+pd.agree <- pd.paper[pd.paper$Cell.Line == "HNPCEpiC" |
+                       pd.paper$Cell.Line == "HEEpiC" |
+                       pd.paper$Cell.Line == "SAEC", ]
+
+#mean center beta raw
+mean_beta <- rowMeans(beta.raw)
+mean_cent_beta <- beta.raw - mean_beta
+
+#subset out the beta as well
+beta.agree <- beta.raw[, pd.agree$geo_accession]
+
+#compare cell lines on a density plot
+densityPlot(beta.agree,
+              sampGroups = as.character(pd.agree$Cell.Line),
+              main="Raw Beta by Cell Line",
+              xlim = c(0.0, 1.2),
+              ylim = c(0.0, 4))
+```
+
+# Compare cell lines on a scatter plot
+```{r}
+smoothScatter(mean_cent_beta[,"GSM999378"],
+              mean_cent_beta[,"GSM999384"],
+              xlab = "HEEpiC",
+              ylab = "HNPCEpiC")
+
+smoothScatter(mean_cent_beta[,"GSM999359"],
+              mean_cent_beta[,"GSM999392"],
+              xlab = "MCF10A-1",
+              ylab = "MCF10A-2")
+```
+
+
+# Dropping Probes
+
+# Set up
+```{r}
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+
+cross_probes <- read.csv("48639-non-specific-probes-Illumina450k.csv")
+
+data(Locations) #load locations data from illumina;
+head(Locations) #X and Y chromosomes are called "chrX" or "chrY";
+```
+
+# Keep only epithelial samples
+```{r}
+#since the column names of beta are gsm......................, chop it down first
+beta_sub <- gsub('_hg19_wgEncodeHaibMethyl450.*', '', colnames(beta))
+head(beta_sub)
+colnames(beta) <- beta_sub
+
+#subset the beta because that's the corrected one
+beta1 <- beta[ , pd.paper$geo_accession]
+```
+
+
+```{r}
+failedP <- detP$detP > 0.05
+failedP[1:5, 1:5] #false = not failed
+
+#add the column names (samples) onto detP
+head(detP$meta$gsm)
+head(detP$manifest$probe_id)
+
+#assign gsm to column names of failedP and probe_id to rows
+colnames(failedP) <- detP$meta$gsm
+rownames(failedP) <- detP$manifest$probe_id
+failedP[1:5, 1:5]
+
+#subset down to the 18 samples that were used;
+failedP <- failedP[ ,pd.paper$geo_accession]
+dim(failedP)
+
+#recalculate per.probe
+#probe fails in 1+ samples
+per.probe <- rowMeans(failedP, na.rm = TRUE) #ignore the NAs 
+table(per.probe >0.05, exclude = NULL)
+# FALSE   TRUE 
+#483480   2097 
+
+#this has only the failed probes- if a probe fails in >5% it gets dropped
+detp_fail <- per.probe[per.probe >0.05]
+
+#checking the number is the same;
+length(detp_fail) #2097
+head(detp_fail)
+
+#remove these two from environment because they are not used again
+rm(detP, failedP)
+```
+
+
+```{r}
+#get the probe names
+detp_fail <- names(detp_fail)
+
+#starting with this many probes;
+dim(beta1) #485512     18
+
+#keep anything that is not the failed row names;
+beta_nodetp <- beta1[!rownames(beta1) %in% detp_fail, ]
+dim(beta_nodetp) #480945     18
+
+
+rm(beta.paper, beta.agree, beta.raw, pd.agree, RGset, rawMSet)
+```
+
+
+# Drop cross reactive probes;
+```{r}
+head(cross_probes) #Probe is an actual column here as opposed to row names;
+
+#Number of cross reactive probes;
+dim(cross_probes) #29233
+
+#this drops all cross reactive probes;
+beta_nocross <- beta_nodetp[!rownames(beta_nodetp) %in% cross_probes$"ï..TargetID", ]
+dim(beta_nocross) #452023     18
+```
+
+# Dropping X and Y chromosome probes;
+```{r}
+#make a dataset of only X and Y;
+sex_probes <- Locations[Locations$chr == "chrX" | Locations$chr == "chrY", ] 
+dim(sex_probes) #11648
+
+#check first 5 rows and columns of beta_nocross dataset;
+beta_nocross[1:5, 1:5] 
+
+#keeping rownames that is not in x and y probes;
+beta_noXY <- beta_nocross[!rownames(beta_nocross) %in% rownames(sex_probes), ]
+
+#check dimensions of dataset without x and y probes;
+dim(beta_noXY) #441772
+```
+
+# Order pd.paper and beta_noXY
+```{r}
+#we already did the subset in the same order so this is essentially just renaming beta_noXY
+beta_final <- beta_noXY[ , pd.paper$geo_accession]
+dim(beta_final) #441772     18
+head(beta_final)
+
+
+#save the beta matrix - all probe info, rows = probes, columns = samples, data = % methylation;
+saveRDS(beta_final, file = "07-03-19 beta_final.rds")
+
+#this includes the subsetted sample data (demographic data);
+saveRDS(pd.paper, file = "07-03-19 pd.paper.rds")
+```
+
+
+# Check PC data from ENCODE
+```{r}
+beta_final_encode <- readRDS("07-03-19 beta_final.rds")
+pd_paper_encode <- readRDS("07-03-19 pd.paper.rds")
+prin <- prcomp(t(beta_final_encode), center=T, scale.=F)
+colnames(pd_paper_encode)
+rownames(prin$x)
+pc_pd <- merge(pd_paper_encode, prin$x, by.x = "geo_accession", by.y = "row.names")
+head(pc_pd)
+
+
+library(ggplot2)
+#amount of variance explained by each PC
+screeplot(prin)
+summary(prin)
+#                            PC1     PC2      PC3      PC4      PC5      PC6      PC7     PC8
+# Standard deviation     39.9995 34.4552 25.36796 24.04746 21.41720 19.75899 18.58751 15.3892
+# Proportion of Variance  0.2378  0.1765  0.09566  0.08596  0.06818  0.05803  0.05136  0.0352
+# Cumulative Proportion   0.2378  0.4143  0.50996  0.59592  0.66410  0.72214  0.77350  0.8087
+
+#make a variable with Proportion of Variance for PC1-8
+prop_var <- data.frame(PC = c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8"),
+                       Proportion = c(0.2378,
+                                      0.1765,
+                                      0.09566, 0.08596, 0.06818, 0.05803, 0.05136, 0.0352))
+
+ggplot(data = prop_var, aes(x = PC, y = Proportion)) +
+  geom_bar(stat = "identity")+ #identity = heights of the bars represent actual data values
+#        ylim(0, 1.0)+ #set y axis limit as 1.0
+        scale_y_continuous(limits=c(0, 0.3), breaks = seq(0, 1.0, 0.1))+
+        theme(axis.title = element_text(size = 20))+
+        theme_minimal()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+
+
+# Make PCA of ENCODE cell lines and WBCs
+```{r}
+#RUN PREVIOUS CHUNK FOR THIS TO WORK
+library(magrittr)
+colnames(pc_pd)
+pc_pd$Cell.Type <- as.character(pc_pd$Cell.Type)
+pc_pd$Cell.Lineage <- as.character(pc_pd$Cell.Lineage)
+
+colors = c("yellow",
+           "orange",
+           "red",
+           "purple",
+           "blue",
+           "darkgreen",
+           "turquoise1",
+           "sienna",
+           "violetred",
+           "plum2",
+           "slategray")
+
+#plot only the epith and fib cell lines because wbc is a separate dataset
+pairs(pc_pd[, 103:110], col = as.factor(pc_pd$Cell.Type), lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pc_pd$Cell.Type)), fill = as.factor(pc_pd$Cell.Type) %>% as.numeric %>% as.factor %>% levels, title = "Cell Type")
+
+#color by sex
+pairs(pc_pd[, 103:110], col = as.factor(pc_pd$predicted_sex), lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pc_pd$predicted_sex)), fill = as.factor(pc_pd$predicted_sex) %>% as.numeric %>% as.factor %>% levels, title = "Predicted Sex")
+
+#Color by cell lineage - THIS DOESN'T WORK - FINISH
+pairs(pc_pd[, 103:110], col = as.factor(pc_pd$Cell.Lineage), lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pc_pd$Cell.Lineage)), fill = colors, title = "Cell Lineage")
+table(pc_pd$Cell.Lineage, exclude = NULL)
+```
+
+
+# check the pc for the pairs of snp agreed cell lines
+```{r}
+beta_final_encode <- readRDS("07-03-19 beta_final.rds")
+pd_paper_encode <- readRDS("07-03-19 pd.paper.rds")
+prin <- prcomp(t(beta_final_encode), center=T, scale.=F)
+colnames(pd_paper_encode)
+rownames(prin$x)
+pc_pd <- merge(pd_paper_encode, prin$x, by.x = "geo_accession", by.y = "row.names")
+head(pc_pd)
+
+colors = ifelse(pc_pd$geo_accession %in% c("GSM999344", "GSM999345"), "red",
+                ifelse(pc_pd$geo_accession %in% c("GSM999378", "GSM999384"), "blue", "black"))
+
+plot(pc_pd$PC1,
+     pc_pd$PC2,
+     col = colors,
+     xlab = 'PC1', ylab = 'PC2', #axis labels
+     pch = 18, #data point shape
+     cex=1, #size of shape
+     oma=c(2,2,2,13)) #size of outer margin area
+# text(pc_pd$PC1,
+#      pc_pd$PC2,
+#      col = colors,
+#      labels = pc_pd$geo_accession, #these are the labels
+#               cex=0.7, #label size
+#               pos = 3)
+legend("topleft", legend = c("Fetal buttock/Fetal lung", "Esophageal/Iris", "No Agreement"), fill = c("red", "blue", "black"), title = "SNP Agreed", cex = 1)
+```

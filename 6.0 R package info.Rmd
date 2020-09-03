@@ -1,0 +1,143 @@
+---
+title: "10-15-19 R package info"
+author: "Lauren Middleton"
+date: "10/15/2019"
+output: html_document
+---
+```{r}
+# Purpose:  Compile info to create the R data package
+#
+# Inputs:   "06-11-19 beta_final_all_samps.rds" - beta matrix of all saliva samples
+#           "06-11-19 pd_final_all_samps.rds" - descriptives for saliva samples
+#           "10-15-19 Saliva RGset.rds" - RGset for saliva
+#           "08-13-19 ontology results_fit overall.csv" - table of gene ontology results
+#
+# Outputs:  "10-15-19 Saliva results_fit_final.rds"
+#           "10-15-19 Saliva Model Parameters.rds"
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+
+```
+
+# Load files
+```{r}
+RGset <- readRDS("C:/Users/HP/Documents/Research 2019/10-15-19 Saliva RGset.rds")
+pd_final_all_samps <- readRDS("06-11-19 pd_final_all_samps.rds")
+beta_final <- readRDS("06-11-19 beta_final.rds")
+```
+
+
+# RGset
+```{r}
+colnames(RGset) #meth_id
+dim(pd_final_all_samps) #60
+colnames(pd_final_all_samps)
+RGset1 <- RGset[ ,pd_final_all_samps$meth_id]
+dim(RGset1) #60
+
+#make pd with only: celltype sentrix (plate id) sentrix_position age, Male, meth_id
+pd_RGset <- pd_final_all_samps[c("meth_id", "Sample_Plate", "Sample_Well", "Sentrix_ID", "Sentrix_Position", "Male", "age.r", "celltype")]
+dim(pd_RGset) #8
+head(pd_RGset)
+
+#rename column names
+colnames(pd_RGset) <- c("meth_id", "Sample_Plate", "Sample_Well", "Sentrix_ID", "Sentrix_Position", "Sex", "Age", "Cell Type")
+colnames(pd_RGset)
+
+#assigning pd info to rgset
+pData(RGset1) <- DataFrame(pd_RGset)
+RGset <- RGset1
+
+#save rgset
+saveRDS(RGset, "10-15-19 Saliva RGset_final.rds")
+```
+
+# update results_fit table
+```{r}
+#load results_fit
+results_fit <- read.csv("08-13-19 ontology results_fit overall.csv")
+head(results_fit)
+
+#change order of beta final to match results fit (ordered by p-value)
+beta_final <- beta_final[match(rownames(beta_final), results_fit$Probe.Name), ]
+identical(rownames(beta_final_all_samps), as.character(results_fit$Probe.Name)) #FALSE
+dim(results_fit)
+
+#need to add low, high, and range columns
+library(matrixStats)
+
+#calculate rowMin for probes
+row_min <- rowMins(beta_final)
+head(row_min)
+row_min <- rowMins(beta_final)
+
+#calculate rowMax for probes
+row_max <- rowMaxs(beta_final)
+head(row_max)
+row_max <- rowMaxs(beta_final)
+
+#calculate rowRange for probes
+row_range <- rowRanges(beta_final)
+head(row_range)
+row_range <- rowRanges(beta_final)
+
+#add this to the results_fit table
+results_fit$low <- row_min
+results_fit$high <- row_max
+results_fit$range <- row_range
+
+#fix the order of the comp table (=results_fit) - finish
+#t stat, p.value, cd45, large, low, high, range
+colnames(results_fit)
+results_fit1 <- results_fit[ , 2:12]
+colnames(results_fit1)
+results_fit <- results_fit1
+colnames(results_fit)
+results_fit1 <- results_fit[ , c(1, 2, 6, 7, 4, 5, 9, 10, 11)]
+colnames(results_fit1)
+results_fit <- results_fit1
+View(results_fit)
+
+#save file
+saveRDS(results_fit, "10-15-19 Saliva results_fit_final.rds")
+```
+
+
+# Model parameters
+```{r}
+results_fit <- readRDS("10-15-19 Saliva results_fit_final.rds")
+#beta_final_all_samps <- readRDS("06-11-19 beta_final_all_samps.rds")
+
+#first cut results_fit by 1e-08
+results_fit_low_p <- as.data.frame(results_fit[results_fit$p.value <1e-08, ])
+
+class(results_fit_low_p$Mean.Methylation.Difference)
+dim(results_fit) #795694
+dim(beta_final) #795694
+dim(results_fit_low_p)
+head(results_fit_low_p)
+colnames(results_fit_low_p)
+View(results_fit_low_p)
+View(results_fit)
+
+#order by mean meth diff
+results_fit_low_p <- results_fit_low_p[order(results_fit_low_p$Mean.Methylation.Difference), ]
+
+
+#take top 200 probes (100 per cell type)
+ModelPars1 <- results_fit_low_p[1:200, ]
+#reorder the columns
+ModelPars1 <- ModelPars1[ , c(1, 3, 4, 5, 6, 2, 7:9)]
+View(ModelPars1)
+
+#keep only cell type columns
+ModelPars <- ModelPars1[ , c("Average.Methylation.CD45.", "Average.Methylation.Large")]
+dim(ModelPars)
+
+#save file
+saveRDS(ModelPars, "10-15-19 Saliva Model Parameters.rds")
+```

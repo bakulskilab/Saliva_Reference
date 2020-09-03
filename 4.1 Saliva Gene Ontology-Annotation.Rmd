@@ -1,0 +1,532 @@
+---
+title: "08-13-19 Gene Annotation"
+author: "Lauren Middleton"
+date: "8/13/2019"
+output: html_document
+---
+```{r}
+# Purpose: Construct gene ontologies for the saliva fractions and whole samples
+# 
+# Inputs:   pd_final   - details of sample fractions (epithelial and immune)
+#           beta_final - beta matrix of sample fractions (epithelial and immune)
+#
+# Outputs:  gene ontology for Figures 4c/d
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+#BiocManager::install("missMethyl")
+```
+
+# Load illumina epic annotations
+```{r}
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+data(Other) #this has the gene names
+head(Other)
+```
+
+
+# Load files and create dummy variables for t-test
+```{r}
+setwd("~/Research 2019")
+#load files
+beta_final <- readRDS("06-11-19 beta_final.rds")
+dim(beta_final)
+pd_final <- readRDS("06-11-19 pd_final.rds")
+
+#create dummy vars
+pd_final$cd45pos <-ifelse(pd_final$celltype =="CD45pos", 1, 0)
+pd_final$large <-ifelse(pd_final$celltype =="large", 1, 0)
+```
+
+
+# Split the beta matrix into cd45 (immune) and large (epithelial) fractions
+```{r}
+head(beta_final)
+colnames(pd_final) #meth_id
+head(pd_final)
+
+#check that the order of probes (columns of beta_final and rows of pd_final) are the same
+identical(colnames(beta_final), pd_final$meth_id) #TRUE
+
+#select out the cd45+ from pd_final
+table(pd_final$celltype)
+cd45pos_names <- pd_final[pd_final$celltype == "CD45pos", ]
+head(cd45pos_names)
+
+#select the beta_final based on cut pd_final - cd45
+beta_final_cd45pos <- beta_final[ , cd45pos_names$meth_id]
+dim(beta_final_cd45pos) #20
+
+#select the beta_final based on cut pd_final - large
+beta_final_large <- beta_final[ , !(colnames(beta_final) %in% cd45pos_names$meth_id)]
+dim(beta_final_large) #19
+```
+
+
+# Linear regressions on probes
+```{r}
+library(limma)
+
+cd45pos <- as.factor(pd_final$cd45pos)
+
+#set up matrix, fit model
+#applies model to entire beta matrix
+design <- model.matrix( ~ cd45pos)
+design #1 is cd45+, 1 vs 0
+
+fit <- lmFit(beta_final, design)
+
+fit <- eBayes(fit) #eBayes doesn't assume that each test is independent
+
+#view results - THESE ARE OVERALL, NOT THE SUBSETED CD45POS AND HEMI
+#this makes the results table (extracts beta coeffs and p-values from fit)
+results_fit <- topTable(fit, coef = "cd45pos1", nrow(beta_final))
+head(results_fit)
+
+#logFC: difference in mean methylation (renamed in final table)
+#AveExpr: average methylation overall
+#t: t statistic between? cd45+ and large?
+#pvalue: how different is the beta coef from 0
+#adj.P.Val: adjusted for multiple comparisons
+#B: log odds of something?
+
+#add std error to results_fit
+#unscaled: stdev calc as everything independent
+#s2.post: ebayes adjusted
+SE <- sqrt(fit$s2.post)*fit$stdev.unscaled
+head(SE) #SE of intercept and cd45+
+
+#take cd45pos SE and add to results_fit
+results_fit <- merge(results_fit, SE[,"cd45pos1"], by = "row.names")
+head(results_fit)
+
+#drop B column because it means nothing and reorder the columns
+results_fit <- results_fit[ , c(1, 2, 8, 3, 4, 5, 6)]
+colnames(results_fit)
+
+#update names of columns for methylation
+colnames(results_fit) #"Row.names" "logFC"     "y"     "AveExpr"   "t"         "P.Value"   "adj.P.Val"
+colnames(results_fit) <- c("Probe Name",
+                           "Mean Methylation Difference",
+                           "Standard Error",
+                           "Average Methylation",
+                           "T statistic",
+                           "p-value",
+                           "Adjusted p-value")
+colnames(results_fit)
+
+#add rownames back
+rownames(results_fit) <- results_fit$"Probe Name"
+head(results_fit)
+```
+
+# Adding average meth by cell type to results_fit
+```{r}
+#reorder probes of cut beta_finals to match results_fit
+beta_final_cd45pos <- beta_final_cd45pos[rownames(results_fit), ]
+identical(rownames(results_fit), rownames(beta_final_cd45pos)) #TRUE
+
+beta_final_large <- beta_final_large[rownames(results_fit), ]
+identical(rownames(results_fit), rownames(beta_final_large)) #TRUE
+
+
+#find cd45 avg meth
+results_fit$"Average Methylation CD45+" <- rowMeans(beta_final_cd45pos)
+head(results_fit)
+
+#find large avg meth
+results_fit$"Average Methylation Large" <- rowMeans(beta_final_large)
+head(results_fit)
+View(results_fit)
+
+#fix order of columns
+colnames(results_fit)
+results_fit <- results_fit[ , c(1, 2, 3, 8, 9, 5, 6, 7)]
+colnames(results_fit)
+
+#order dataset by p-value
+results_fit <- results_fit[order(results_fit$"p-value"), ]
+head(results_fit)
+
+
+
+#write.csv(results_fit, "08-13-19 ontology results_fit overall.csv")
+```
+
+
+
+# Cut the dataset into hypo/hyper/hemi methylated
+```{r}
+#subset by p-values under 1e-08
+results_fit_low_p <- results_fit[results_fit$"p-value" < 1e-08,]
+dim(results_fit_low_p)
+table(results_fit$"p-value" < 1e-08) #169384
+
+#hypermethlyation
+#hypermeth <- results_fit[results_fit$"Mean Methylation Difference" >0, ]
+hypermeth <- results_fit_low_p[results_fit_low_p$"Mean Methylation Difference" >0, ]
+dim(hypermeth) #122327      
+
+#hypometh
+#hypometh <- results_fit[results_fit$"Mean Methylation Difference" <0, ]
+hypometh <- results_fit_low_p[results_fit_low_p$"Mean Methylation Difference" <0, ]
+#hypometh_count <- table(hypermeth$`p-value` <1e-08)["TRUE"]
+dim(hypometh) #47057 
+
+
+# % hypomethylation vs hypermeth sites
+
+#length(hypometh$`p-value` <1e-08) #257698
+#length(hypermeth$`p-value` <1e-08) #537996
+x<- (dim(hypometh) / (dim(hypermeth) + dim(hypometh)))*100
+x #27.78%
+
+#hemimeth
+cd45pos_beta <- beta_final[, pd_final$cd45pos == 1]
+dim(cd45pos_beta) #795694     20
+cd45pos_rowmeans <- rowMeans(cd45pos_beta) #now have all the mean meths per sample
+hemimeth <- cd45pos_rowmeans[cd45pos_rowmeans >0.2 & cd45pos_rowmeans <0.6]
+hemimeth <- cd45pos_rowmeans[cd45pos_rowmeans >0.3 & cd45pos_rowmeans <0.5]
+length(hemimeth) #108758, 51872
+results_fit_hemimeth <- results_fit[names(hemimeth), ]
+dim(results_fit_hemimeth) #51872     
+```
+
+
+# Make histogram of Mean methyl difference and calculate % difference
+```{r}
+#for every probe
+hist(results_fit$"Mean Methylation Difference")
+
+
+
+#histogram of low p-value probes
+hist(results_fit_low_p$"Mean Methylation Difference",
+     main = "Mean Methylation Difference (p<1e-08)",
+     xlab = "Difference in mean methylation between CD45 and Large")
+
+#mean methylation difference %
+mean(abs(results_fit_low_p$"Mean Methylation Difference")*100) #32.4%
+```
+
+
+# Row ttests of large(epithelial) vs cd45(immune)
+```{r}
+#do row ttest
+library(genefilter)
+ttest_cd45pos <- rowttests(as.matrix(beta_final), as.factor(pd_final$cd45pos), tstatOnly = FALSE)
+
+#ttest of pos vs large
+cd45pos_large <- pd_final[(pd_final$celltype) %in% c("large", "CD45pos"),]
+cd45pos_large_beta <- beta_final[ , cd45pos_large$meth_id]
+ttest_cd45pos_large <- rowttests(as.matrix(cd45pos_large_beta),
+                                 as.factor(cd45pos_large$cd45pos),
+                                 tstatOnly = FALSE)
+#order the ttests;
+ttest_cd45pos <- ttest_cd45pos[order(ttest_cd45pos$p.value), ]
+
+#take only the top 500 ttests for each cell type - end up with 500;
+#this is probe names
+top.t <- c(rownames(ttest_cd45pos)[1:500])
+```
+
+
+# Gene ontology based on ttest
+```{r}
+library(missMethyl)
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+gst <- gometh(sig.cpg = top.t,
+              all.cpg = rownames(ttest_cd45pos),
+              collection = "GO",
+              array.type = "EPIC")
+top_gene_paths <- topGSA(gst, number = nrow(gst), sort = TRUE)
+top_gene_paths_big <- top_gene_paths[top_gene_paths$DE >=5, ]
+
+#only use 5+ overlapping genes
+View(top_gene_paths_big)
+```
+
+
+# Gene ontology based on top 10000 sites overall
+```{r}
+#first figure out an adjusted p-value that cuts off about 10,000
+table(results_fit$"Adjusted p-value" <0.05) #426433 -too many
+table(results_fit$"Adjusted p-value" <1e-10) #115566
+table(results_fit$"Adjusted p-value" <1e-11) #95318
+
+#extract these probes
+#overall_10000_probes <- row.names(results_fit[results_fit$"Adjusted p-value" <1e-10, ])
+#take the top 10,000 rows instead of p-value cutoff
+overall_10000_probes <- row.names(results_fit[1:10000, ])
+length(overall_10000_probes) #10000
+
+
+ontology_overall <- gometh(sig.cpg = overall_10000_probes,
+                            all.cpg = rownames(results_fit),
+                            collection = "GO",
+                            array.type = "EPIC")
+top_gene_paths <- topGSA(ontology_overall, number = nrow(ontology_overall), sort = TRUE)
+top_gene_paths_overall <- top_gene_paths[top_gene_paths$DE >=5, ]
+View(top_gene_paths_overall)
+
+#cut out the cc and mf pathways, only keep bp
+top_gene_paths_overall_cut <- top_gene_paths_overall[top_gene_paths_overall$ONTOLOGY == "BP", ]
+View(top_gene_paths_overall_cut)
+
+#no pathways significant by FDR
+
+#write.csv(top_gene_paths_overall_cut, "08-13-19 ontology top 10000 overall.csv")
+```
+
+
+# Gene ontology based on top 10000 sites from hemimeth
+```{r}
+#first figure out an adjusted p-value that cuts off about 10,000
+table(results_fit_hemimeth$"Adjusted p-value" <0.05) #46118 -too many
+table(results_fit_hemimeth$"Adjusted p-value" <1e-9) #14479
+
+#extract these probes
+#hemimeth_10000_probes <- row.names(results_fit_hemimeth[results_fit_hemimeth$"Adjusted p-value" <1e-9, ])
+hemimeth_10000_probes <- row.names(results_fit_hemimeth[1:10000, ])
+length(hemimeth_10000_probes)
+
+
+ontology_hemimeth <- gometh(sig.cpg = hemimeth_10000_probes, #enriched relative to our cpgs
+                            all.cpg = rownames(results_fit), #dropped some probes so we don't have all epic probes
+                            collection = "GO", #these are the sets of pathways
+                            array.type = "EPIC")
+top_gene_paths <- topGSA(ontology_hemimeth, number = nrow(ontology_hemimeth), sort = TRUE)
+top_gene_paths_hemi <- top_gene_paths[top_gene_paths$DE >=5, ]
+
+
+#cut out the cc and mf, only keep biological pathways
+top_gene_paths_hemi_cut <- top_gene_paths_hemi[top_gene_paths_hemi$ONTOLOGY == "BP", ]
+View(top_gene_paths_hemi_cut)
+
+#write.csv(top_gene_paths_hemi_cut, "08-13-19 ontology top 10000 hemi.csv")
+```
+
+
+# Gene ontology based on top 10000 sites from hypermeth
+```{r}
+#first figure out an adjusted p-value that cuts off about 10,000
+table(hypermeth$"Adjusted p-value" <0.05) #291696 -too many
+table(hypermeth$"Adjusted p-value" <1e-9) #57991
+table(hypermeth$"Adjusted p-value" <1e-10) #21021 - next is 3
+
+#extract these probes
+#hypermeth_10000_probes <- row.names(hypermeth[hypermeth$"Adjusted p-value" <1e-10, ])
+hypermeth_10000_probes <- row.names(hypermeth[1:10000, ])
+length(hypermeth_10000_probes)
+
+
+ontology_hypermeth <- gometh(sig.cpg = hypermeth_10000_probes,
+                            all.cpg = rownames(results_fit),
+                            collection = "GO",
+                            array.type = "EPIC")
+top_gene_paths <- topGSA(ontology_hypermeth, number = nrow(ontology_hypermeth), sort = TRUE)
+top_gene_paths_hyper <- top_gene_paths[top_gene_paths$DE >=5, ]
+#View(top_gene_paths_hyper)
+
+#cut out the cc and mf pathways, only keep bp
+top_gene_paths_hyper_cut <- top_gene_paths_hyper[top_gene_paths_hyper$ONTOLOGY == "BP", ]
+View(top_gene_paths_hyper_cut)
+
+#write.csv(top_gene_paths_hyper_cut, "08-13-19 ontology top 10000 hyper.csv")
+```
+
+
+# Gene ontology based on top 10000 sites from hypometh
+```{r}
+#first figure out an adjusted p-value that cuts off about 10,000
+table(hypometh$"Adjusted p-value" <0.05) #111570 -too many
+table(hypometh$"Adjusted p-value" <1e-9) #11147 
+
+#extract these probes
+#hypometh_10000_probes <- row.names(hypometh[hypometh$"Adjusted p-value" <1e-9, ])
+hypometh_10000_probes <- row.names(hypometh[1:10000, ])
+length(hypometh_10000_probes)
+
+
+ontology_hypometh <- gometh(sig.cpg = hypometh_10000_probes,
+                            all.cpg = rownames(results_fit),
+                            collection = "GO",
+                            array.type = "EPIC")
+top_gene_paths <- topGSA(ontology_hypometh, number = nrow(ontology_hypometh), sort = TRUE)
+top_gene_paths_hypo <- top_gene_paths[top_gene_paths$DE >=5, ]
+#View(top_gene_paths_hypo)
+
+
+#cut out the cc and mf pathways, only keep bp
+top_gene_paths_hypo_cut <- top_gene_paths_hypo[top_gene_paths_hypo$ONTOLOGY == "BP", ]
+View(top_gene_paths_hypo_cut)
+
+#write.csv(top_gene_paths_hypo_cut, "08-13-19 ontology top 10000 hypo.csv")
+```
+
+
+# Which genes are sig in our datset out of the pathway genes - only for overall
+```{r}
+library(annotate)
+library(org.Hs.eg.db)
+
+#loading database
+egGO2ALLEGS <- tryCatch(getFromNamespace("org.Hs.egGO2ALLEGS","org.Hs.eg.db"), error=function(e) FALSE)
+
+#get entrez id (ID numbers for genes in that database) for genes mapped to our cpgs
+genes.overall <- getMappedEntrezIDs(overall_10000_probes,
+                                 all.cpg=rownames(results_fit),
+                                 array.type='EPIC')
+
+go <- "GO:0005913"
+
+#table of genes and go terms
+keys <- keys(org.Hs.eg.db, keytype = "ENTREZID")
+GeneID.PathID <- suppressMessages(select(org.Hs.eg.db, keys=keys,
+                                           columns=c("ENTREZID","GO","ONTOLOGY"),
+                                           keytype="ENTREZID"))
+d <- !duplicated(GeneID.PathID[, c("ENTREZID", "GO")])
+GeneID.PathID <- GeneID.PathID[d, c(1,2,4)]
+GeneID.PathID <- GeneID.PathID[!is.na(GeneID.PathID$GO),]
+
+
+#what are all the genes in a GO term
+go.genes = GeneID.PathID[GeneID.PathID$GO==go,'ENTREZID']
+
+
+#what are our significant genes
+sig_genes <- genes.hemi$sig.eg
+#get the names so we don't have to look at numbers in the entrez id
+de.genes = getSYMBOL(sig_genes[sig_genes %in% go.genes],data='org.Hs.eg')
+ 
+
+length(de.genes)
+length(go.genes)
+
+
+#make a csv of all the sig genes in the pathway
+write.csv(c("GO:0005913",de.genes), file = "08-13-19 cell-cell adherens junction.csv")
+```
+
+
+# Which genes are sig in our datset out of the pathway genes - only for overall
+```{r}
+library(annotate)
+library(org.Hs.eg.db)
+
+#loading database
+egGO2ALLEGS <- tryCatch(getFromNamespace("org.Hs.egGO2ALLEGS","org.Hs.eg.db"), error=function(e) FALSE)
+
+#get entrez id (ID numbers for genes in that database) for genes mapped to our cpgs
+genes.overall <- getMappedEntrezIDs(overall_10000_probes,
+                                 all.cpg=rownames(results_fit),
+                                 array.type='EPIC')
+
+#perikaryon
+go <- "GO:0043204"
+
+#table of genes and go terms
+keys <- keys(org.Hs.eg.db, keytype = "ENTREZID")
+GeneID.PathID <- suppressMessages(select(org.Hs.eg.db, keys=keys,
+                                           columns=c("ENTREZID","GO","ONTOLOGY"),
+                                           keytype="ENTREZID"))
+d <- !duplicated(GeneID.PathID[, c("ENTREZID", "GO")])
+GeneID.PathID <- GeneID.PathID[d, c(1,2,4)]
+GeneID.PathID <- GeneID.PathID[!is.na(GeneID.PathID$GO),]
+
+
+#what are all the genes in a GO term
+go.genes = GeneID.PathID[GeneID.PathID$GO==go,'ENTREZID']
+
+
+#what are our significant genes
+sig_genes <- genes.hemi$sig.eg
+#get the names so we don't have to look at numbers in the entrez id
+de.genes = getSYMBOL(sig_genes[sig_genes %in% go.genes],data='org.Hs.eg')
+ 
+
+length(de.genes)
+length(go.genes)
+
+
+#make a csv of all the sig genes in the pathway
+write.csv(c("GO:0043204",de.genes), file = "08-13-19 hemi perikaryon.csv")
+```
+
+
+# Match cg to gene name
+```{r}
+#pull the gene names out of the s4 object, Other
+genes <- Other$UCSC_RefGene_Name
+#make it a dataframe
+genes <- as.data.frame(genes)
+#add the cg rownames as a column
+genes$cgs <- rownames(Other)
+head(genes)
+
+#find the matching cg and gene
+cg1 <- genes[genes$cgs == "cg07110356", ]
+cg1
+cg1_test <- t.test(beta_final['cg07110356',] ~ pd_final$celltype)
+cg1_test$p.value #8.18e-18
+
+cg2 <- genes[genes$cgs == "cg17804342", ]
+cg2
+cg2_test <- t.test(beta_final['cg17804342',] ~ pd_final$celltype)
+cg2_test$p.value #7.65e-20
+```
+
+
+# Annotation
+#_________________________________
+# Add chromosome + position and nearest gene symbol annotated by illumina to results_fit table
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+setwd("~/Research 2019")
+
+#load things
+illumina_manifest <- read.csv("MethylationEPIC_v-1-0_B5.csv", header = TRUE, skip = 7) #866554
+beta_final <- readRDS("06-11-19 beta_final.rds") #795694
+results_fit <- read.csv("08-13-19 ontology results_fit overall.csv")
+library(tidyverse)
+
+#the colnames I want are: Strand, UCSC_RefGene_Name, Chromosome_36, and maybe Coordinate_36
+illumina_annotations <- illumina_manifest[ , c("Name",
+                                               "Strand",
+                                               "UCSC_RefGene_Name",
+                                               "Chromosome_36",
+                                               "Coordinate_36")]
+
+#subset illumina_annotations down to beta_final probes
+merged <- illumina_annotations[illumina_annotations$Name %in% rownames(beta_final), ]
+dim(merged) #795496
+#write.csv(merged, "4.1 add to supplemental file.csv")
+weird_cpgs2 <- rownames(beta_final)[!rownames(beta_final) %in% illumina_annotations$Name]
+#noooooo illumina is missing the same number of probes as the other ilm10b4.hg19 library
+
+#check that they are the same:
+setwd("~/Research 2019")
+weird_cpgs <- read.csv("weird_cpgs.csv")
+x <- as.character(weird_cpgs$x)
+identical(x, weird_cpgs2) #TRUE - they're both missing the same probe annotations unless I did something wrong
+
+#rename Name colname to Probe.Name for merging into results_fit
+merged$Probe.Name <- merged$Name
+#delete cgs column
+merged1 <- subset(merged, select = -c(Name))
+dim(merged1) #795496
+
+#add them to the results_fit table
+results_fit_annotated <- full_join(results_fit, merged1, by = "Probe.Name")
+dim(results_fit_annotated) #795694, 13
+#save new results_fit_annotated and copy it into the supplemental table manually
+write.csv(results_fit_annotated, "08-25-20 annotated_results_fit.csv")
+```

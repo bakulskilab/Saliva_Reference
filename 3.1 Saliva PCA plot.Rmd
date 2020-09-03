@@ -1,0 +1,665 @@
+---
+title: "06-17-19 Saliva PCA plot"
+author: "Lauren Middleton"
+date: "6/17/2019"
+output: html_document
+---
+```{r}
+# Purpose: Create a PCA that plots all cell types without whole or oragene
+# 
+# Inputs:   pd_final   - details of sample fractions (epithelial and immune)
+#           beta_final - beta matrix of sample fractions (epithelial and immune)
+#
+# Outputs:  density plot figure
+```
+
+
+# Install ggfortify to make PCA
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+
+#install.packages("ggfortify")
+#install.packages("grDevices")
+#install.packages("DescTools")
+#install.packages("shape")
+#install.packages("tidyverse")
+```
+
+# Drop cd45- from beta and pd (this has already been done)
+```{r}
+beta_final <- readRDS("06-11-19 beta_final.rds")
+pd_final <- readRDS("06-11-19 pd_final.rds")
+
+head(pd_final)
+cd45neg_samps <- pd_final$celltype == "CD45neg"
+cd45neg_samps
+
+pd_final1 <-  pd_final[!cd45neg_samps, ]
+table(pd_final1$celltype)
+pd_final <- pd_final1
+saveRDS(pd_final, "06-11-19 pd_final.rds")
+
+#drop from beta
+beta_final1 <- beta_final[, pd_final$meth_id]
+identical(pd_final$meth_id, colnames(beta_final1))
+beta_final <- beta_final1
+rm(beta_final1)
+
+saveRDS(beta_final, "06-11-19 beta_final.rds")
+```
+
+# Set-up
+```{r}
+#Open this file for Environment
+load("06-17-19 Saliva PCA plot Environment.RData")
+
+#load beta_final;
+beta_final <- readRDS("06-11-19 beta_final.rds")
+pd_final <- readRDS("06-11-19 pd_final.rds")
+```
+
+
+# Set the color palatte;
+```{r}
+library(RColorBrewer)
+library(dplyr)
+
+library(grDevices)
+library(DescTools)
+library(shape) #for the color legend
+
+graphColors <- brewer.pal(8,'Set1')
+
+graphColors1 <- brewer.pal(n =10, name = "Spectral")
+
+graphColors2 <- c("coral",
+                  "#0281e9",
+                  "#64ba22",
+                  "#cb4cd0",
+                  "#b1d34e",
+                  "#503db8",
+                  "#dea800",
+                  "#f59bff",
+                  "#00bb6f",
+                  "#a50347",
+                  "#64dbae",
+                  "#ff8edf",
+                  "#859300",
+                  "#86baff",
+                  "#ff8367",
+                  "#235e34",
+                  "#ff94ae",
+                  "#79461f",
+                  "#69447e",
+                  "#edbd8c",
+                  "#b17291")
+```
+
+
+# Set up data for PCA
+```{r}
+#make a dataset of beta final into a pca object
+prin <- prcomp(t(beta_final),center=T,scale.=F)
+```
+
+
+# Calculate % variance explained by each PC
+```{r}
+library(ggplot2)
+#amount of variance explained by each PCA 1-10
+screeplot(prin)
+summary(prin)
+#                            PC1      PC2      PC3     PC4     PC5     PC6
+# Standard deviation     84.7285 20.18696 14.57732 9.16071 8.32746 8.12112
+# Proportion of Variance  0.8081  0.04587  0.02392 0.00945 0.00781 0.00742
+# Cumulative Proportion   0.8081  0.85396  0.87787 0.88732 0.89513 0.90255
+
+#make a variable with Proportion of Variance for PC1-6
+prop_percent <- c(0.8081, 0.04587, 0.02392, 0.00945, 0.00781, 0.00742)*100
+prop_var <- data.frame(PC = c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6"),
+                       Percent = prop_percent)
+
+ggplot(data = prop_var, aes(x = PC, y = Percent)) +
+  geom_bar(stat = "identity")+ #identity = heights of the bars represent actual data values
+        scale_y_continuous(limits=c(0, 100), breaks = seq(0, 100, 10))+
+        theme(axis.title = element_text(size = 20))+
+        theme_minimal()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+```
+
+
+# Make the PCA - by cell type
+```{r}
+#output to pdf
+pdf('06-17-19 PCA by cell type.pdf', width = 11, height = 8.5)
+graphColors <- c("purple4", "lightsalmon1")
+
+#make the PCA plot for cell types without whole or oragene;
+plot(prin$x[ ,1],
+     prin$x[ ,2],
+     col = graphColors[as.factor(pd_final$celltype)],
+     xlab = 'PC1', ylab = 'PC2', #axis labels
+     pch = 18, #data point shape
+     cex=0.5, #size of shape
+     oma=c(2,2,2,13), #size of outer margin area
+     xlim = c(-180, 100),
+     ylim = c(-45, 35)) 
+text(prin$x[,1],
+     prin$x[,2],
+     col = graphColors[as.factor(pd_final$celltype)],
+     labels = pd_final$Sample.ID, #these are the labels
+              cex=0.7, #label size
+              pos = 3) 
+legend('bottomleft', legend = levels(as.factor(pd_final$celltype)),
+       fill = graphColors,
+       title = "Cell Type")
+dev.off()
+```
+
+# Make the PCA - by cell type without text
+```{r}
+#output to pdf
+png('06-17-19 PCA by cell type - no text.png', width=1200, height=1200);
+    par(mar=c(9, 14, 6, 2), mgp = c(3, 3, 0)) #mgp:(?,distance,moves axis line)
+graphColors <- c("purple4", "lightsalmon1")
+#make the PCA plot for cell types without whole or oragene;
+plot(prin$x[ ,1],
+     prin$x[ ,2],
+     col = graphColors[as.factor(pd_final$celltype)],
+     xlab = '', ylab = '', #axis labels
+     pch = c(16, 18)[as.factor(pd_final$celltype)], #data point shape
+     cex = 4, #size of shape
+     cex.axis = 4,
+     cex.lab = 3,
+     oma=c(2,2,2,13), #size of outer margin area
+     xlim = c(-180, 100),
+     ylim = c(-50, 33))
+mtext(text = "Principal Component 1", #this increases the distance between x-axis and text
+                side = 1, #side 1 = bottom
+                line = 7, cex = 4)
+mtext(text = "Principal Component 2", #this increases the distance between y-axis and text
+                side = 2, #side 1 = bottom
+                line = 7, cex = 4)
+dev.off()
+```
+
+
+# Make the PCA - by Sick
+```{r}
+#output to pdf
+pdf('06-17-19 PCA by Sick.pdf', width = 11, height = 8.5)
+
+#Color the PCA plot by Sick status
+plot(prin$x[ ,1],
+     prin$x[ ,2],
+     col = graphColors[as.factor(pd_final$Sick)],
+     xlab = 'PC1', ylab = 'PC2', #axis labels
+     pch = 18, #data point shape
+     cex=0.5, #size of shape
+     oma=c(2,2,2,13), #size of outer margin area
+     xlim = c(-180, 100),
+     ylim = c(-50, 35)) 
+text(prin$x[ ,1],
+     prin$x[ ,2],
+     col = graphColors[as.factor(pd_final$Sick)],
+     labels = pd_final$Sample.ID, #these are the data labels
+              cex=0.7, #label size
+              pos = 3) 
+legend('bottomleft', legend = levels(as.factor(pd_final$Sick)),
+       fill = as.factor(pd_final$Sick) %>% as.numeric %>% as.factor %>% levels,
+       title = "Sick (0 = no, 1 = yes)")
+dev.off()
+```
+
+
+# Make the PCA - by Age Quartiles
+```{r}
+graphColors3 <- c("lightpink1",
+                  "pink3",
+                  "limegreen",
+                  "slateblue3",
+                  "skyblue3")
+
+# group ages by year 7-16
+#age_cat <- cut(pd_final$age.r, c(7, 8, 9, 10, 11, 12, 13, 14, 15, 16), include.lowest = TRUE)
+age_quart <- round(quantile(pd_final$age.r), 2)
+age_quart
+#      0%      25%      50%      75%     100% 
+# 7.88501 10.05065 11.70842 13.87269 16.89254 
+
+pdf("06-17-19 PCA by Age.pdf")
+plot(prin$x[ ,1], #this is PC1
+     prin$x[ ,2], #this is PC2
+     col = graphColors[as.factor(age_quart)],
+     xlab = 'PC1', ylab = 'PC2', #axis labels
+     pch = 18, #data point shape
+     cex=0.5, #size of shape
+     oma = c(2,2,2,13), #size of outer margin area
+     xlim = c(-200, 100),
+     ylim = c(-50, 40)) 
+text(prin$x[,1],
+     prin$x[,2],
+     col = graphColors[as.factor(age_quart)],
+     labels = pd_final$Sample.ID, #these are the labels
+              cex=0.7, #label size
+              pos = 3)
+legend("bottomleft", legend = levels(as.factor(age_quart)),
+       fill = graphColors[as.factor(age_quart)],
+       title = "Age (years)")
+dev.off()
+```
+
+
+# Make the PCA - by Cell count Quartiles
+```{r}
+#set up the quantiles
+cell_quart <- round(quantile(pd_final$cell_count), 2)/10000
+cell_quart
+#    0%    25%    50%    75%   100% 
+#  72.0  360.0  626.5 1878.0 3440.0
+
+pdf("06-17-19 PCA by Cell Count.pdf")
+plot(prin$x[ ,1], #this is PC1
+     prin$x[ ,2], #this is PC2
+     col = graphColors[as.factor(cell_quart)],
+     xlab = 'PC1', ylab = 'PC2', #axis labels
+     pch = 18, #data point shape
+     cex=0.5, #size of shape
+     oma = c(2,2,2,13), #size of outer margin area
+     xlim = c(-200, 100),
+     ylim = c(-50, 40)) 
+text(prin$x[,1],
+     prin$x[,2],
+     col = graphColors[as.factor(cell_quart)],
+     labels = pd_final$Sample.ID, #these are the labels
+              cex=0.7, #label size
+              pos = 3)
+legend("bottomleft", legend = levels(as.factor(cell_quart)),
+       fill = graphColors[as.factor(cell_quart)],
+       title = "Cell Count (*10^4)")
+dev.off()
+
+```
+
+
+# Subset row/slide info
+```{r}
+#Choose characters 1-12 within meth.id
+slide <- substr(pd_final$meth_id, 1,12)
+slide
+
+#Choose the rows out of meth.id
+row <- substr(pd_final$meth_id, 14,16)
+row
+```
+
+
+# Make PC1 vs PC2 of row/slide within array
+```{r}
+#set colors
+colors = c("yellow",
+           "orange",
+           "red",
+           "purple",
+           "blue",
+           "darkgreen",
+           "turquoise1",
+           "sienna",
+           "violetred",
+           "plum2",
+           "slategray")
+
+pdf('06-29-19 PCA Row-Slide of Array.pdf')
+
+#row
+plot(prin$x[ ,1],
+     prin$x[ ,2],
+     col = colors, #plot by row
+     xlab = 'PC1', ylab = 'PC2', #axis labels
+     pch = 18, #data point shape
+     cex = 0.5, #size of shape
+     oma = c(2,2,2,13), #size of outer margin area
+     xlim = c(-220, 100),
+     ylim = c(-40, 35)) 
+text(prin$x[,1],
+     prin$x[,2],
+     col = colors,
+     labels = pd_final$Sample.ID, #these are the labels
+              cex=0.7, #label size
+              pos = 3) 
+legend("bottomleft", legend = levels(as.factor(row)), fill = colors, title = "Row", cex = 1)
+
+#slide
+plot(prin$x[ ,1],
+     prin$x[ ,2],
+     col = colors,
+     xlab = 'PC1', ylab = 'PC2', #axis labels
+     pch = 18, #data point shape
+     cex=0.5, #size of shape
+     oma=c(2,2,2,13), #size of outer margin area
+     xlim = c(-220, 100),
+     ylim = c(-40, 35)) 
+text(prin$x[,1],
+     prin$x[,2],
+     col = colors,
+     labels = pd_final$Sample.ID, #these are the labels
+              cex=0.7, #label size
+              pos = 3) 
+legend("bottomleft", legend = levels(as.factor(row)), fill = colors, title = "Slide", cex = 1)
+dev.off()
+```
+
+
+# paint pc plot by quartiles of cell type
+```{r}
+GR_quart <- quantile(pd_final_wbc$GR, probs = c(0, 0.25, 0.5, 0.75, 1.0))
+#weird rounding of quartiles
+GR_quart[1] <- GR_quart[1]-0.000001
+
+#pull the samples and they are categorical vars now
+GR_q4 <- cut(pd_final_wbc$GR, breaks = GR_quart)
+GR_q4
+
+plot(prin$x[ ,1],
+     prin$x[ ,2],
+     col = as.factor(GR_q4),
+     xlab = 'PC1', ylab = 'PC2', #axis labels
+     pch = 18, #data point shape
+     cex=0.5, #size of shape
+     oma=c(2,2,2,13), #size of outer margin area
+     xlim = c(-160, 100),
+     ylim = c(-40, 35)) 
+text(prin$x[,1],
+     prin$x[,2],
+     col = graphColors[as.factor(GR_q4)],
+     labels = pd_final$Sample.ID, #these are the labels
+              cex=0.7, #label size
+              pos = 3) 
+legend('bottomleft', legend = levels(as.factor(GR_q4)),
+       fill = as.factor(GR_q4) %>% as.numeric %>% as.factor %>% levels,
+       title = "Quartiles")
+
+```
+
+
+
+# Correlation between PC and continuous demog vars
+```{r}
+#PC data are in prin
+#PC1 vs age
+beta_final <- readRDS("06-11-19 beta_final.rds")
+pd_final <- readRDS("06-11-19 pd_final.rds")
+prin <- prcomp(t(beta_final),center=T,scale.=F)
+
+#first merge in PCs into pd_final
+head(prin$x) #rownames are sample which corresponds to meth_id
+pc_corr <- merge(prin$x, pd_final, by.x = "row.names", by.y = "meth_id")
+
+#Age vs PC1
+cor(pc_corr$PC1, pc_corr$age.r)
+#cell type vs PC1
+summary(aov(pc_corr$PC1 ~ pc_corr$celltype)) #p = 1.73e-15
+
+
+
+#set up the list
+list_type <- list()
+
+#assign 2 sublists into one list
+list_type[["continuous"]] <- c("age.r",
+                               "viability",
+                               "cell_count",
+                               "volume")
+list_type[["categorical"]] <- c("celltype", "white_bin", "Male", "batch", "Sick")
+list_type
+
+#outer for loop says to run this loop 1 time
+for(i in 1) 
+{
+  var_contin_categ <- list_type[[i]]
+  print(i)
+  #this loop makes pc1-6 and compares them to the demog vars from list[continuous]
+  for(j in 1:6)
+  {
+    pc <- paste("PC", j, sep = "")
+    print(pc)
+    
+    corr_contin <- sapply(var_contin_categ, FUN = function(var) {
+  cor.test(pc_corr[,pc], pc_corr[,var])$p.value
+  })
+#this is stacking the dataset one row at a time
+  if(j == 1) 
+  {
+    dataset_correlation <- corr_contin #for pc1, just make the dataset
+  } else {
+    dataset_correlation <- rbind(dataset_correlation, corr_contin) #after pc1, add each set of correlations as a new row
+  }
+  
+  } 
+  View(dataset_correlation)
+}
+
+#fix the rownames to be PC1-6
+rownames(dataset_correlation) <- paste("PC", c(1:6), sep = "")
+```
+
+
+# Run categorical comparisons to PCs
+```{r}
+#add slide and row to pc_corr
+slide <- substr(pd_final$meth_id, 1,12)
+row <- substr(pd_final$meth_id, 14,16)
+pc_corr$slide <- slide
+pc_corr$row <- row
+
+#sapply - categorical
+#change PC# 1-6
+cat_vars <- c("celltype", "white_bin", "Male", "batch", "Sick", "slide", "row")
+corr_categ_pc1 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_corr$PC1 ~ pc_corr[,var]))
+})
+corr_categ_pc2 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_corr$PC2 ~ pc_corr[,var]))
+})
+corr_categ_pc3 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_corr$PC3 ~ pc_corr[,var]))
+})
+corr_categ_pc4 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_corr$PC4 ~ pc_corr[,var]))
+})
+corr_categ_pc5 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_corr$PC5 ~ pc_corr[,var]))
+})
+corr_categ_pc6 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_corr$PC6 ~ pc_corr[,var]))
+})
+```
+
+
+#Set up to visualize the categorical associations
+```{r}
+library(gplots)
+#check pc5 and batch
+summary(aov(pc_corr$PC5 ~ pc_corr$batch))
+boxplot(pc_corr$PC5 ~ pc_corr$batch)
+stripchart(pc_corr$PC5 ~ pc_corr$batch, vertical = TRUE, method = "jitter")
+
+#first generate matrix
+p_matrix_categ <- matrix(nrow = 6, ncol = 7)
+rownames(p_matrix_categ) <- c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6")
+colnames(p_matrix_categ) <- c("celltype",
+                              "white_bin",
+                              "Male",
+                              "batch",
+                              "Sick",
+                              "Slide",
+                              "Row")
+View(p_matrix_categ)
+
+
+#Get the info for "celltype", "white_bin", "Male", "batch", "Sick", "Slide", "Row"
+
+#celltype, assign p-values to each cell
+p_matrix_categ["PC1", "celltype"] <- corr_categ_pc1$celltype["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC2", "celltype"] <- corr_categ_pc2$celltype["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC3", "celltype"] <- corr_categ_pc3$celltype["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC4", "celltype"] <- corr_categ_pc4$celltype["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC5", "celltype"] <- corr_categ_pc5$celltype["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC6", "celltype"] <- corr_categ_pc6$celltype["pc_corr[, var]", "Pr(>F)"]
+
+#white_bin
+p_matrix_categ["PC1", "white_bin"] <- corr_categ_pc1$white_bin["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC2", "white_bin"] <- corr_categ_pc2$white_bin["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC3", "white_bin"] <- corr_categ_pc3$white_bin["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC4", "white_bin"] <- corr_categ_pc4$white_bin["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC5", "white_bin"] <- corr_categ_pc5$white_bin["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC6", "white_bin"] <- corr_categ_pc6$white_bin["pc_corr[, var]", "Pr(>F)"]
+  
+#Male
+p_matrix_categ["PC1", "Male"] <- corr_categ_pc1$Male["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC2", "Male"] <- corr_categ_pc2$Male["pc_corr[, var]", "Pr(>F)"]  
+p_matrix_categ["PC3", "Male"] <- corr_categ_pc3$Male["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC4", "Male"] <- corr_categ_pc4$Male["pc_corr[, var]", "Pr(>F)"]  
+p_matrix_categ["PC5", "Male"] <- corr_categ_pc5$Male["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC6", "Male"] <- corr_categ_pc6$Male["pc_corr[, var]", "Pr(>F)"]
+
+#batch
+p_matrix_categ["PC1", "batch"] <- corr_categ_pc1$batch["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC2", "batch"] <- corr_categ_pc2$batch["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC3", "batch"] <- corr_categ_pc3$batch["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC4", "batch"] <- corr_categ_pc4$batch["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC5", "batch"] <- corr_categ_pc5$batch["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC6", "batch"] <- corr_categ_pc6$batch["pc_corr[, var]", "Pr(>F)"]
+
+#Sick
+p_matrix_categ["PC1", "Sick"] <- corr_categ_pc1$Sick["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC2", "Sick"] <- corr_categ_pc2$Sick["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC3", "Sick"] <- corr_categ_pc3$Sick["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC4", "Sick"] <- corr_categ_pc4$Sick["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC5", "Sick"] <- corr_categ_pc5$Sick["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC6", "Sick"] <- corr_categ_pc6$Sick["pc_corr[, var]", "Pr(>F)"]
+
+#Slide
+p_matrix_categ["PC1", "Slide"] <- corr_categ_pc1$slide["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC2", "Slide"] <- corr_categ_pc2$slide["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC3", "Slide"] <- corr_categ_pc3$slide["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC4", "Slide"] <- corr_categ_pc4$slide["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC5", "Slide"] <- corr_categ_pc5$slide["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC6", "Slide"] <- corr_categ_pc6$slide["pc_corr[, var]", "Pr(>F)"]
+
+#Row
+p_matrix_categ["PC1", "Row"] <- corr_categ_pc1$row["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC2", "Row"] <- corr_categ_pc2$row["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC3", "Row"] <- corr_categ_pc3$row["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC4", "Row"] <- corr_categ_pc4$row["pc_corr[, var]", "Pr(>F)"]
+p_matrix_categ["PC5", "Row"] <- corr_categ_pc5$row["pc_corr[, var]", "Pr(>F)"] 
+p_matrix_categ["PC6", "Row"] <- corr_categ_pc6$row["pc_corr[, var]", "Pr(>F)"]
+
+View(p_matrix_categ)
+
+#combine the continuous and categorical datasets of p-values
+pc_demog_pvalue <- cbind(p_matrix_categ, dataset_correlation)
+View(pc_demog_pvalue)
+```
+
+
+# Create heatmap of p-values from categ demog vars
+```{r}
+pdf("06-17-19 heatmap categorical demogs.pdf", height = 7, width = 11)
+my_palette <- colorRampPalette(c("red", "yellow", "white"))
+heatmap.2(t(pc_demog_pvalue),
+          trace = "none",
+          dendrogram = "none",
+          key = TRUE, keysize = 1.5,
+          col = my_palette,
+          breaks = c(seq(0,0.1,length=100),
+                         seq(0.11,0.2,length=100),
+                         seq(0.21,1, length=100)),
+          margins = c(5, 7),
+          Rowv = FALSE,
+          Colv = FALSE)
+dev.off()
+
+table(pd_final$batch, pd_final$celltype)
+```
+
+
+# use pairs funct to plot multiple PCs in a grid
+# color has to be categorical
+```{r}
+library(tidyverse)
+library(dplyr)
+pd_final <- readRDS("06-11-19 pd_final.rds")
+beta_final <- readRDS("06-11-19 beta_final.rds")
+#make a dataset of beta final into a pca object
+prin <- prcomp(t(beta_final),center=T,scale.=F)
+age_quart <- round(quantile(pd_final$age.r), 2)
+viab_quart <- round(quantile(pd_final$viability), 2)
+slide <- substr(pd_final$meth_id, 1,12)
+row <- substr(pd_final$meth_id, 14,16)
+
+#set colors
+colors = c("yellow",
+           "orange",
+           "red",
+           "purple",
+           "blue",
+           "darkgreen",
+           "turquoise1",
+           "sienna",
+           "violetred",
+           "plum2",
+           "slategray")
+
+pdf("06-17-19 PCA demographics.pdf", height = 8.5, width = 11)
+#Cell Type - FINISH
+pairs(prin$x[,1:6], col = graphColors[as.factor(pd_final$celltype)], lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pd_final$celltype)), fill = graphColors, title = "Cell Type")
+
+#Age_quart
+pairs(prin$x[,1:6], col = colors[as.factor(age_quart)], lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(age_quart)), fill = colors, title = "Age (years)")
+
+#white_bin
+pairs(prin$x[,1:6], col = as.factor(pd_final$white_bin), lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pd_final$white_bin)), fill = as.factor(pd_final$white_bin) %>% as.numeric %>% as.factor %>% levels, title = "White (0=POC, 1=White)")
+
+#Male
+pairs(prin$x[,1:6], col = as.factor(pd_final$Male), lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pd_final$Male)), fill = as.factor(pd_final$Male) %>% as.numeric %>% as.factor %>% levels, title = "Male (0=Female, 1=Male)")
+dim(pd_final)
+
+#Sick
+pairs(prin$x[,1:6], col = as.factor(pd_final$Sick), lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pd_final$Sick)), fill = as.factor(pd_final$Sick) %>% as.numeric %>% as.factor %>% levels, title = "Sick (0=Not Sick, 1=Sick)")
+
+#Viability
+pairs(prin$x[,1:6], col = colors[as.factor(viab_quart)], lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(viab_quart)), fill = colors, title = "Viability (%)")
+
+#Batch
+pairs(prin$x[,1:6], col = colors[as.factor(pd_final$batch)], lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pd_final$batch)), fill = colors, title = "Processing batch")
+
+#Slide
+pairs(prin$x[,1:6], col = colors[as.factor(slide)], lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(slide)), fill = colors, title = "Slide", cex = 0.8)
+
+#Row
+pairs(prin$x[,1:6], col = colors[as.factor(row)], lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(row)), fill = colors, title = "Row", cex = 1)
+dev.off()
+```

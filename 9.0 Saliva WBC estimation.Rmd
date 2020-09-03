@@ -1,0 +1,877 @@
+---
+title: "06-19-19 WBC type estimation"
+author: "Lauren Middleton"
+date: "6/19/2019"
+output: html_document
+---
+```{r}
+# Purpose:  estimate the proportions of white blood cells in the saliva samples using Reinius reference panel in ewastools
+#
+# Inputs:   "06-11-19 pd_final_all_samps.rds" - descriptives of saliva samples
+#           "06-11-19 beta_final_all_samps.rds" - beta matrix from saliva samples
+#
+# Outputs:  plots and basic stats
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+```
+
+# Load everything
+```{r}
+#devtools::install_github("hhhh5/ewastools")
+
+library(ewastools)
+library(genefilter) #for rowVars
+setwd("C:/Users/HP/Documents/Research 2019")
+
+#load in data files from 06-11-19;
+pd_final_all <- readRDS("06-11-19 pd_final_all_samps.rds")
+beta_final_all <- readRDS("06-11-19 beta_final_all_samps.rds")
+
+#instead load "06-19-19 07-08-19 Saliva WBC environment.RData"
+
+#check that the load happened correctly;
+head(pd_final_all)
+```
+
+# Do the proportion estimation and do some logic checks
+```{r}
+cells_comp <- estimateLC(beta_final_all, "Reinius")
+
+class(cells_comp) #data table
+
+#turning cells_comp from a data table into a data frame
+cells_comp <- data.frame(cells_comp)
+
+#attaching our sample IDs to the data frame instead of the numbers it was
+rownames(cells_comp) <- colnames(beta_final_all)
+head(cells_comp)
+
+#how many predicted as negative
+table(cells_comp$CD8 < 0) #5 predict as 0
+table(cells_comp < 0) #1 predicts as 0 outside of CD8
+table(cells_comp == 0)
+
+#reassign the negative values as 0
+cells_comp[cells_comp <0] <- 0
+
+#how many predict as >1 (this is a proportion, not %)
+table(cells_comp$GR > 1) #2 predict as >100
+
+#reassign the 1+ values as 1
+cells_comp[cells_comp >1] <- 1
+```
+
+
+# Merge cell composition data frame with pd_final_all
+```{r}
+# match meth ID to meth ID in pd final to merge the two
+wbc <- merge(pd_final_all, cells_comp, by.x = "meth_id", by.y = "row.names")
+dim(wbc)
+pd_final_all_wbc <- wbc
+```
+
+## Main processing is done ##
+#____________________________________________________________________________________________________#
+
+# Calculate ranges of WBCs in saliva samples
+```{r}
+table(pd_final_all_wbc$GR, pd_final_all_wbc$celltype == "CD45pos")
+pd_final_all_wbc$GR
+
+#calculate the ranges of predicted wbcs
+
+#Granulocytes:
+tapply(pd_final_all_wbc$GR, pd_final_all_wbc$celltype, range)
+#immune: 30.5-100%
+#epith: 12.2-24.6%
+#oragene: 41.1-86.4%
+#whole: 19.5-100%
+
+#CD4:
+tapply(pd_final_all_wbc$CD4, pd_final_all_wbc$celltype, range)
+#immune: 0-28.0%
+#epith: 35.0-42.3%
+#oragene: 6.8-28.1%
+#whole: 0.5-39.4%
+
+#CD8:
+tapply(pd_final_all_wbc$CD8, pd_final_all_wbc$celltype, range)
+#immune: 0%
+#epith: 0%
+#oragene: 0%
+#whole: 0%
+
+#B cells
+tapply(pd_final_all_wbc$B, pd_final_all_wbc$celltype, range)
+#immune: 3.3-20.0%
+#epith: 18.2-20.7%
+#oragene: 8.8-13.8%
+#whole: 0.5-39.4%
+
+#Monocytes
+tapply(pd_final_all_wbc$MO, pd_final_all_wbc$celltype, range)
+#immune: 0-14.1%
+#epith: 16.5-20.6%
+#oragene: 0-11.3%
+#whole: 0.2-16.8%
+
+#Natural Killer
+tapply(pd_final_all_wbc$NK, pd_final_all_wbc$celltype, range)
+#immune: 0-8.7%
+#epith: 5.8-8.8%
+#oragene: 1.9-6.1%
+#whole: 0-8.3%
+```
+
+## 3/3/20
+# Make violin plots with all WBC types on one plot for each saliva fraction
+
+# Planning
+```{r}
+View(pd_final_all_wbc)
+#celltype has the fraction types - might have to select out the CD45pos ones first
+#row is each sample
+#there are columns for each WBC type - these are in decimals - convert to %
+table(pd_final_all_wbc$celltype)
+
+#PLAN
+#step 1: keep only the columns with Sample_Group(column 2), celltype(column 11), and WBCs(columns 65-70)
+#step 2: make a new dataset with only immune cell types - should be 20 rows x 8 columns
+#step 3: turn the WBC columns wide to long - check epidish file for code
+#step 4: turn decimal estimates into percents
+#step 5: fix names of GR:NK to Granulocyte:Natural Killer
+#step 6: graph using ggplot2
+```
+
+# Set up the immune dataset
+```{r}
+#step 1: keep only the columns with Sample_Group(column 2), celltype(column 11), and WBCs(columns 85-90)
+wbc_all_samp <- pd_final_all_wbc[ , c(2, 11, 65:70)]
+colnames(wbc_all_samp) #60 obs, 8 vars
+
+#step 2: make a new dataset with only immune cell types - should be 20 rows x 8 columns
+immune_wbc <- wbc_all_samp[wbc_all_samp$celltype == "CD45pos", ]
+table(immune_wbc$celltype) #20 CD45pos observations
+
+#step 3: turn the WBC columns wide to long - check epidish file for code
+library(tidyr)
+#gather = function
+#immune_wbc = original dataset
+#wbc_cell_type = column with wbc cell types
+#estimate = proportion estimate numbers
+#GR:NK = columns to turn from wide to long
+immune_wbc_est_long <- gather(immune_wbc, wbc_cell_type, estimate, GR:NK, factor_key=TRUE)
+View(immune_wbc_est_long)
+
+#step 4: turn decimal estimates into percents
+immune_wbc_est_long$estimate <- immune_wbc_est_long$estimate*100
+
+#step 5: fix names of GR:NK to Granulocyte:Natural Killer
+table(immune_wbc_est_long$wbc_cell_type) #20 of each wbc type
+ # GR CD4 CD8   B  MO  NK 
+ # 20  20  20  20  20  20
+immune_wbc_est_long$wbc_cell_type <- gsub("GR", "Granulocyte", immune_wbc_est_long$wbc_cell_type)
+immune_wbc_est_long$wbc_cell_type <- gsub("B", "B cell", immune_wbc_est_long$wbc_cell_type)
+immune_wbc_est_long$wbc_cell_type <- gsub("MO", "Monocyte", immune_wbc_est_long$wbc_cell_type)
+immune_wbc_est_long$wbc_cell_type <- gsub("NK", "Natural Killer", immune_wbc_est_long$wbc_cell_type)
+table(immune_wbc_est_long$wbc_cell_type)
+
+range(immune_wbc$GR) #0.3-1.0
+```
+
+# Set up the Whole saliva dataset
+```{r}
+#step 1: keep only the columns with Sample_Group(column 2), celltype(column 11), and WBCs(columns 85-90)
+wbc_all_samp <- pd_final_all_wbc[ , c(2, 11, 65:70)]
+colnames(wbc_all_samp) #60 obs, 8 vars
+
+#step 2: make a new dataset with only immune cell types - should be 20 rows x 8 columns
+whole_wbc <- wbc_all_samp[wbc_all_samp$celltype == "whole", ]
+table(whole_wbc$celltype) #18 Whole observations
+
+#step 3: turn the WBC columns wide to long - check epidish file for code
+library(tidyr)
+#gather = function
+#immune_wbc = original dataset
+#wbc_cell_type = column with wbc cell types
+#estimate = proportion estimate numbers
+#GR:NK = columns to turn from wide to long
+whole_wbc_est_long <- gather(whole_wbc, wbc_cell_type, estimate, GR:NK, factor_key=TRUE)
+View(whole_wbc_est_long)
+
+#step 4: turn decimal estimates into percents
+whole_wbc_est_long$estimate <- whole_wbc_est_long$estimate*100
+
+#step 5: fix names of GR:NK to Granulocyte:Natural Killer
+table(whole_wbc_est_long$wbc_cell_type) #18 of each wbc type
+
+whole_wbc_est_long$wbc_cell_type <- gsub("GR", "Granulocyte", whole_wbc_est_long$wbc_cell_type)
+whole_wbc_est_long$wbc_cell_type <- gsub("B", "B cell", whole_wbc_est_long$wbc_cell_type)
+whole_wbc_est_long$wbc_cell_type <- gsub("MO", "Monocyte", whole_wbc_est_long$wbc_cell_type)
+whole_wbc_est_long$wbc_cell_type <- gsub("NK", "Natural Killer", whole_wbc_est_long$wbc_cell_type)
+table(whole_wbc_est_long$wbc_cell_type)
+```
+
+
+# Set up the Oragene dataset
+```{r}
+#step 1: keep only the columns with Sample_Group(column 2), celltype(column 11), and WBCs(columns 85-90)
+wbc_all_samp <- pd_final_all_wbc[ , c(2, 11, 65:70)]
+colnames(wbc_all_samp) #60 obs, 8 vars
+
+#step 2: make a new dataset with only immune cell types - should be 20 rows x 8 columns
+oragene_wbc <- wbc_all_samp[wbc_all_samp$celltype == "oragene", ]
+table(oragene_wbc$celltype) #4 oragene observations
+
+#step 3: turn the WBC columns wide to long - check epidish file for code
+library(tidyr)
+#gather = function
+#immune_wbc = original dataset
+#wbc_cell_type = column with wbc cell types
+#estimate = proportion estimate numbers
+#GR:NK = columns to turn from wide to long
+oragene_wbc_est_long <- gather(oragene_wbc, wbc_cell_type, estimate, GR:NK, factor_key=TRUE)
+View(oragene_wbc_est_long)
+
+#step 4: turn decimal estimates into percents
+oragene_wbc_est_long$estimate <- oragene_wbc_est_long$estimate*100
+
+#step 5: fix names of GR:NK to Granulocyte:Natural Killer
+table(oragene_wbc_est_long$wbc_cell_type) #4 of each wbc type
+
+oragene_wbc_est_long$wbc_cell_type <- gsub("GR", "Granulocyte", oragene_wbc_est_long$wbc_cell_type)
+oragene_wbc_est_long$wbc_cell_type <- gsub("B", "B cell", oragene_wbc_est_long$wbc_cell_type)
+oragene_wbc_est_long$wbc_cell_type <- gsub("MO", "Monocyte", oragene_wbc_est_long$wbc_cell_type)
+oragene_wbc_est_long$wbc_cell_type <- gsub("NK", "Natural Killer", oragene_wbc_est_long$wbc_cell_type)
+table(oragene_wbc_est_long$wbc_cell_type)
+```
+
+
+# Graphing immune fraction WBC estimates
+```{r}
+#step 6: graph using ggplot2
+library(ggplot2)
+
+
+immune_wbc_est_long$wbc_cell_type <- factor(immune_wbc_est_long$wbc_cell_type, levels = c("Granulocyte", "CD4", "CD8", "B cell", "Monocyte", "Natural Killer"))
+
+png("06-19-19 03-03-20 WBC prediction from Reinius - Immune.png", width=1300, height=1000)
+ggplot(data = immune_wbc_est_long, aes(x = wbc_cell_type, y = estimate, fill = wbc_cell_type))+
+  geom_violin(scale="count", width=1.5)+
+  #GR
+  geom_rect(aes(xmin = 0.5, xmax = 1.5,
+                ymin = 38, ymax = 72),
+                fill = "pink", alpha = 0.02)+
+  #CD4
+  geom_rect(aes(xmin = 1.5, xmax = 2.5,
+                ymin = 31, ymax = 52),
+                fill = "pink", alpha = 0.02)+
+  #CD8
+  geom_rect(aes(xmin = 2.5, xmax = 3.5,
+                ymin = 18, ymax = 35),
+                fill = "pink", alpha = 0.02)+
+  #B
+  geom_rect(aes(xmin = 3.5, xmax = 4.5,
+                ymin = 11.3, ymax = 18),
+                fill = "pink", alpha = 0.02)+ 
+  #MO
+  geom_rect(aes(xmin = 4.5, xmax = 5.5,
+                ymin = 0, ymax = 8),
+                fill = "pink", alpha = 0.02)+  
+  #NK
+  geom_rect(aes(xmin = 5.5, xmax = 6.5,
+                ymin = 4, ymax = 27),
+                fill = "pink", alpha = 0.02)+  
+  geom_jitter(width = 0.08, size = 3, aes(size = 3))+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  scale_y_continuous(breaks = seq(0,100,10),
+                     limits = c(-1,100))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=35))+ #makes text bigger
+  labs(fill = "Estimated Cell Types")+ #change the legend title
+  theme(axis.text.x = element_text(colour = "black", size = 35),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  #scale_fill_manual(values=c("#F8766D", "#00BFC4", "yellow"))+
+  theme(legend.position="none")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+dev.off()
+```
+
+# Graphing Whole fraction WBC estimates
+```{r}
+#step 6: graph using ggplot2
+library(ggplot2)
+
+
+whole_wbc_est_long$wbc_cell_type <- factor(whole_wbc_est_long$wbc_cell_type, levels = c("Granulocyte", "CD4", "CD8", "B cell", "Monocyte", "Natural Killer"))
+
+png("06-19-19 03-03-20 WBC prediction from Reinius - Whole.png", width=1300, height=1000)
+ggplot(data = whole_wbc_est_long, aes(x = wbc_cell_type, y = estimate, fill = wbc_cell_type))+
+  geom_violin(scale="count", width=1.5)+
+  #GR
+  geom_rect(aes(xmin = 0.5, xmax = 1.5,
+                ymin = 38, ymax = 72),
+                fill = "pink", alpha = 0.02)+
+  #CD4
+  geom_rect(aes(xmin = 1.5, xmax = 2.5,
+                ymin = 31, ymax = 52),
+                fill = "pink", alpha = 0.02)+
+  #CD8
+  geom_rect(aes(xmin = 2.5, xmax = 3.5,
+                ymin = 18, ymax = 35),
+                fill = "pink", alpha = 0.02)+
+  #B
+  geom_rect(aes(xmin = 3.5, xmax = 4.5,
+                ymin = 11.3, ymax = 18),
+                fill = "pink", alpha = 0.02)+ 
+  #MO
+  geom_rect(aes(xmin = 4.5, xmax = 5.5,
+                ymin = 0, ymax = 8),
+                fill = "pink", alpha = 0.02)+  
+  #NK
+  geom_rect(aes(xmin = 5.5, xmax = 6.5,
+                ymin = 4, ymax = 27),
+                fill = "pink", alpha = 0.02)+   
+  geom_jitter(width = 0.08, size = 3, aes(size = 3))+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  scale_y_continuous(breaks = seq(0,100,10),
+                     limits = c(-1,100))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=35))+ #makes text bigger
+  labs(fill = "Estimated Cell Types")+ #change the legend title
+  theme(axis.text.x = element_text(colour = "black", size = 35),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  #scale_fill_manual(values=c("#F8766D", "#00BFC4", "yellow"))+
+  theme(legend.position="none")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+
+dev.off()
+```
+
+
+# Graphing Oragene fraction WBC estimates
+```{r}
+#step 6: graph using ggplot2
+library(ggplot2)
+
+
+oragene_wbc_est_long$wbc_cell_type <- factor(oragene_wbc_est_long$wbc_cell_type,
+                                             levels = c("Granulocyte",
+                                                        "CD4",
+                                                        "CD8",
+                                                        "B cell",
+                                                        "Monocyte",
+                                                        "Natural Killer"))
+
+png("06-19-19 03-03-20 WBC prediction from Reinius - Oragene.png", width=1300, height=1000)
+ggplot(data = oragene_wbc_est_long, aes(x = wbc_cell_type, y = estimate, fill = wbc_cell_type))+
+  geom_violin(scale="count", width=1.5)+
+  #GR
+  geom_rect(aes(xmin = 0.5, xmax = 1.5,
+                ymin = 38, ymax = 72),
+                fill = "pink", alpha = 0.02)+
+  #CD4
+  geom_rect(aes(xmin = 1.5, xmax = 2.5,
+                ymin = 31, ymax = 52),
+                fill = "pink", alpha = 0.02)+
+  #CD8
+  geom_rect(aes(xmin = 2.5, xmax = 3.5,
+                ymin = 18, ymax = 35),
+                fill = "pink", alpha = 0.02)+
+  #B
+  geom_rect(aes(xmin = 3.5, xmax = 4.5,
+                ymin = 11.3, ymax = 18),
+                fill = "pink", alpha = 0.02)+ 
+  #MO
+  geom_rect(aes(xmin = 4.5, xmax = 5.5,
+                ymin = 0, ymax = 8),
+                fill = "pink", alpha = 0.02)+  
+  #NK
+  geom_rect(aes(xmin = 5.5, xmax = 6.5,
+                ymin = 4, ymax = 27),
+                fill = "pink", alpha = 0.02)+  
+  geom_jitter(width = 0.08, size = 3, aes(size = 3))+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  scale_y_continuous(breaks = seq(0,100,10),
+                     limits = c(-1,100))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=35))+ #makes text bigger
+  labs(fill = "Estimated Cell Types")+ #change the legend title
+  theme(axis.text.x = element_text(colour = "black", size = 35),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  #scale_fill_manual(values=c("#F8766D", "#00BFC4", "yellow"))+
+  theme(legend.position="none")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+
+dev.off()
+```
+
+
+# Set up to graph the 3 estimate figures as a panel
+```{r}
+library(ggplot2)
+wbc_all_samp <- pd_final_all_wbc[ , c(2, 11, 65:70)]
+colnames(wbc_all_samp) #60 obs, 8 vars
+
+#using wbc_all_samp file to start
+ic_epi_ora_wbc <- wbc_all_samp[wbc_all_samp$celltype != "large", ]
+table(ic_epi_ora_wbc$celltype) #4 oragene observations
+# CD45pos oragene   whole 
+#      20       4      18 
+
+#turn the WBC columns wide to long
+library(tidyr)
+all_wbc_est_long <- gather(ic_epi_ora_wbc, wbc_cell_type, estimate, GR:NK, factor_key=TRUE)
+View(all_wbc_est_long)
+
+#turn decimal estimates into percents
+all_wbc_est_long$estimate <- all_wbc_est_long$estimate*100
+
+#fix names of GR:NK to Granulocyte:Natural Killer
+table(all_wbc_est_long$wbc_cell_type) #42 of each wbc type
+
+all_wbc_est_long$wbc_cell_type <- gsub("GR", "Granulocyte", all_wbc_est_long$wbc_cell_type)
+all_wbc_est_long$wbc_cell_type <- gsub("B", "B cell", all_wbc_est_long$wbc_cell_type)
+all_wbc_est_long$wbc_cell_type <- gsub("MO", "Monocyte", all_wbc_est_long$wbc_cell_type)
+all_wbc_est_long$wbc_cell_type <- gsub("NK", "Natural Killer", all_wbc_est_long$wbc_cell_type)
+table(all_wbc_est_long$wbc_cell_type)
+
+#make the celltype saliva names clear
+all_wbc_est_long$celltype <- gsub("CD45pos", "Immune Fractions", all_wbc_est_long$celltype)
+all_wbc_est_long$celltype <- gsub("whole", "Whole Samples", all_wbc_est_long$celltype)
+all_wbc_est_long$celltype <- gsub("oragene", "Oragene Kits", all_wbc_est_long$celltype)
+table(all_wbc_est_long$celltype)
+
+#make these factors in order
+all_wbc_est_long$wbc_cell_type <- factor(all_wbc_est_long$wbc_cell_type,
+                                             levels = c("Granulocyte",
+                                                        "CD4",
+                                                        "CD8",
+                                                        "B cell",
+                                                        "Monocyte",
+                                                        "Natural Killer"))
+```
+
+
+# Graph the 3 estimate figures as a panel
+```{r}
+png("06-19-19 03-03-20 WBC prediction from Reinius - Panel.png", width=5500, height=1200)
+ggplot(data = all_wbc_est_long, aes(x = wbc_cell_type, y = estimate, fill = wbc_cell_type))+
+  geom_point(alpha = 0.01)+
+  #GR
+  geom_rect(aes(xmin = 0.5, xmax = 1.5,
+                ymin = 38, ymax = 72),
+                fill = "pink", alpha = 0.02)+
+  #CD4
+  geom_rect(aes(xmin = 1.5, xmax = 2.5,
+                ymin = 31, ymax = 52),
+                fill = "pink", alpha = 0.02)+
+  #CD8
+  geom_rect(aes(xmin = 2.5, xmax = 3.5,
+                ymin = 18, ymax = 35),
+                fill = "pink", alpha = 0.02)+
+  #B
+  geom_rect(aes(xmin = 3.5, xmax = 4.5,
+                ymin = 6, ymax = 27),
+                fill = "pink", alpha = 0.02)+ 
+  #MO
+  geom_rect(aes(xmin = 4.5, xmax = 5.5,
+                ymin = 0, ymax = 8),
+                fill = "pink", alpha = 0.02)+  
+  #NK
+  geom_rect(aes(xmin = 5.5, xmax = 6.5,
+                ymin = 4, ymax = 27),
+                fill = "pink", alpha = 0.02)+  
+  geom_jitter(width = 0.08, size = 5, aes(size = 20))+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  scale_y_continuous(breaks = seq(0,100,10),
+                     limits = c(-1,100))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=55))+ #makes text bigger
+  labs(fill = "Estimated Cell Types")+ #change the legend title
+  theme(axis.text.x = element_text(colour = "black", size = 55),
+        axis.text.y = element_text(colour = "black", size = 55),
+        axis.title.y = element_text(size = 65))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  #scale_fill_manual(values=c("#F8766D", "#00BFC4", "yellow"))+
+  theme(legend.position="none")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())+
+  facet_wrap(vars(celltype))+ #makes a panel
+  theme(strip.background = element_blank(),
+        strip.text.x = element_blank())
+dev.off()
+```
+
+
+## 6/19/19
+#_____________________________________________________________________________________________________#
+# These violin plots have all saliva sample types on one plot for each WBC type
+# Make violin plots of cell types - Granulocytes
+```{r}
+#make GR violin plots
+library(ggplot2)
+ggplot(pd_final_all_wbc, aes(x = celltype, y = GR))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+```
+
+# Make violin plots of cell types - CD4
+```{r}
+ggplot(pd_final_all_wbc, aes(x = celltype, y = CD4))+
+  scale_y_continuous(name="CD4", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+```
+
+# Make violin plots of cell types - CD8
+```{r}
+ggplot(pd_final_all_wbc, aes(x = celltype, y = CD8))+
+  scale_y_continuous(name="CD8", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+```
+
+# Make violin plots of cell types - B cells
+```{r}
+ggplot(pd_final_all_wbc, aes(x = celltype, y = B))+
+  scale_y_continuous(name="B cells", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+```
+
+# Make violin plots of cell types - MO
+```{r}
+ggplot(pd_final_all_wbc, aes(x = celltype, y = MO))+
+  scale_y_continuous(name="MO", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+```
+
+# Make violin plots of cell types - NK
+```{r}
+ggplot(pd_final_all_wbc, aes(x = celltype, y = NK))+
+  scale_y_continuous(name="NK", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+```
+
+# PDF of all cell type estimation violin plots
+```{r}
+pdf("06-29-19 WBC type estimation.pdf")
+ggplot(pd_final_all_wbc, aes(x = celltype, y = GR))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  geom_rect(aes(xmin = 0, xmax = 6, ymin = 0.32, ymax = 0.64),
+                   fill = "pink", alpha = 0.02)
+
+# Make violin plots of cell types - CD4
+ggplot(pd_final_all_wbc, aes(x = celltype, y = CD4))+
+  scale_y_continuous(name="CD4", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  geom_rect(aes(xmin = 0, xmax = 6, ymin = 0.31, ymax = 0.52),
+                   fill = "pink", alpha = 0.02)
+
+# Make violin plots of cell types - CD8
+ggplot(pd_final_all_wbc, aes(x = celltype, y = CD8))+
+  scale_y_continuous(name="CD8", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  geom_rect(aes(xmin = 0, xmax = 6, ymin = 0.18, ymax = 0.35),
+                   fill = "pink", alpha = 0.02)
+
+# Make violin plots of cell types - B cells
+ggplot(pd_final_all_wbc, aes(x = celltype, y = B))+
+  scale_y_continuous(name="B cells", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  geom_rect(aes(xmin = 0, xmax = 6, ymin = 0.048, ymax = 0.27),
+                   fill = "pink", alpha = 0.02)
+
+# Make violin plots of cell types - MO
+ggplot(pd_final_all_wbc, aes(x = celltype, y = MO))+
+  scale_y_continuous(name="MO", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  geom_rect(aes(xmin = 0, xmax = 6, ymin = 0.02, ymax = 0.08),
+                   fill = "pink", alpha = 0.02)
+
+# Make violin plots of cell types - NK
+ggplot(pd_final_all_wbc, aes(x = celltype, y = NK))+
+  scale_y_continuous(name="NK", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  geom_rect(aes(xmin = 0, xmax = 6, ymin = 0, ymax = 0.01),
+                   fill = "pink", alpha = 0.02)
+dev.off()
+```
+
+# PNG of all cell type estimation violin plots
+```{r}
+# Make violin plots of cell types - GR
+png("06-29-19 WBC type estimation - GR.png")
+ggplot(pd_final_all_wbc, aes(x = celltype, y = GR))+
+  scale_y_continuous(name="GR", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+dev.off()
+```
+```{r}
+# Make violin plots of cell types - CD4
+png("06-29-19 WBC type estimation - CD4.png")
+ggplot(pd_final_all_wbc, aes(x = celltype, y = CD4))+
+  scale_y_continuous(name="CD4", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+dev.off()
+```
+```{r}
+# Make violin plots of cell types - CD8
+png("06-29-19 WBC type estimation - CD8.png")
+ggplot(pd_final_all_wbc, aes(x = celltype, y = CD8))+
+  scale_y_continuous(name="CD8", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+dev.off()
+```
+```{r}
+png("06-29-19 WBC type estimation - B.png")
+# Make violin plots of cell types - B cells
+ggplot(pd_final_all_wbc, aes(x = celltype, y = B))+
+  scale_y_continuous(name="B cells", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+dev.off()
+```
+```{r}
+png("06-29-19 WBC type estimation - MO.png")
+# Make violin plots of cell types - MO
+ggplot(pd_final_all_wbc, aes(x = celltype, y = MO))+
+  scale_y_continuous(name="MO", limits=c(0, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+dev.off()
+```
+```{r}
+png("06-29-19 WBC type estimation - NK.png")
+# Make violin plots of cell types - NK
+ggplot(pd_final_all_wbc, aes(x = celltype, y = NK))+
+  scale_y_continuous(name="NK", limits=c(0, 1.0))+
+  scale_x_discrete(name = "celltype", expand=c(.08,0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))
+dev.off()
+```
+
+
+# Create image panel of WBC estimations
+```{r}
+library(ggpubr)
+
+png("06-29-19 WBC type estimation - Panel.png", width = 800, height = 600)
+# Make violin plots of cell types - GR
+p1 <- ggplot(pd_final_all_wbc, aes(x = celltype, y = GR))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  theme(axis.text.x = element_text(size=12))+
+  theme(axis.title.y = element_text(size=14, face = "bold"))+
+  theme(axis.title.x=element_blank())+
+  geom_rect(aes(xmin = 0, xmax = 5, ymin = 0.32, ymax = 0.64),
+                   fill = "pink", alpha = 0.02)
+
+# Make violin plots of cell types - CD4
+p2 <- ggplot(pd_final_all_wbc, aes(x = celltype, y = CD4))+
+  scale_y_continuous(name="CD4", limits=c(-0.01, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  theme(axis.text.x = element_text(size=12))+
+  theme(axis.title.y = element_text(size=14, face = "bold"))+
+  theme(axis.title.x=element_blank())+
+  geom_rect(aes(xmin = 0, xmax = 5, ymin = 0.31, ymax = 0.52),
+                   fill = "pink", alpha = 0.02)
+
+# Make violin plots of cell types - CD8
+p3 <- ggplot(pd_final_all_wbc, aes(x = celltype, y = CD8))+
+  scale_y_continuous(name="CD8", limits=c(-0.01, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  theme(axis.text.x = element_text(size=12))+
+  theme(axis.title.y = element_text(size=14, face = "bold"))+
+  theme(axis.title.x=element_blank())+
+  geom_rect(aes(xmin = 0, xmax = 5, ymin = 0.18, ymax = 0.35),
+                   fill = "pink", alpha = 0.02)
+
+# Make violin plots of cell types - B cells
+p4 <- ggplot(pd_final_all_wbc, aes(x = celltype, y = B))+
+  scale_y_continuous(name="B cells", limits=c(-0.01, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  theme(axis.text.x = element_text(size=12))+
+  theme(axis.title.y = element_text(size=14, face = "bold"))+
+  theme(axis.title.x=element_blank())+
+  geom_rect(aes(xmin = 0, xmax = 5, ymin = 0.048, ymax = 0.27),
+                   fill = "pink", alpha = 0.02)
+
+# Make violin plots of cell types - MO
+p5 <- ggplot(pd_final_all_wbc, aes(x = celltype, y = MO))+
+  scale_y_continuous(name="MO", limits=c(-0.01, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  theme(axis.text.x = element_text(size=12))+
+  theme(axis.title.y = element_text(size=14, face = "bold"))+
+  theme(axis.title.x=element_blank())+
+  geom_rect(aes(xmin = 0, xmax = 5, ymin = 0.02, ymax = 0.08),
+                   fill = "pink", alpha = 0.02)
+
+# Make violin plots of cell types - NK
+p6 <- ggplot(pd_final_all_wbc, aes(x = celltype, y = NK))+
+  scale_y_continuous(name="NK", limits=c(-0.01, 1.0))+
+  geom_violin()+
+  geom_jitter(shape = 16, position = position_jitter(0.05))+
+  theme(axis.text.x = element_text(size=12))+
+  theme(axis.title.y = element_text(size=14, face = "bold"))+
+  theme(axis.title.x=element_blank())+
+  geom_rect(aes(xmin = 0, xmax = 5, ymin = 0.04, ymax = 0.27),
+                   fill = "pink", alpha = 0.02)
+
+ggarrange(p1, p2, p3, p4, p5, p6, ncol = 3, nrow = 2)
+dev.off()
+```
+
+
+
+#________________________________________________________________________________________________
+# ANOVA of cell types
+```{r}
+GR_anova <- aov(GR~celltype, data = pd_final_all_wbc)
+
+CD4_anova <- aov(CD4~celltype, data = pd_final_all_wbc)
+
+CD8_anova <- aov(CD8~celltype, data = pd_final_all_wbc)
+
+B_anova <- aov(B~celltype, data = pd_final_all_wbc)
+
+MO_anova <- aov(MO~celltype, data = pd_final_all_wbc)
+
+NK_anova <- aov(NK~celltype, data = pd_final_all_wbc)
+```
+
+# ANOVA of cell types - Summary
+```{r}
+summary(GR_anova)  #F value  Pr(>F)    
+                   #47.98    6.95e-12
+summary(CD4_anova) #F value Pr(>F)    
+                   #51.89   2.07e-12
+summary(CD8_anova) #F value Pr(>F)    
+                   #0.091  0.913
+summary(B_anova)   #F value Pr(>F)    
+                   #37.22  2.89e-10
+summary(MO_anova)  #F value Pr(>F)    
+                   #43.01 3.61e-11
+summary(NK_anova)  #F value Pr(>F)    
+                   #22.27 1.9e-07
+```
+
+
+
+#____________________________________________________________________________________________________#
+#____________________________________________________________________________________________________#
+# This is not that relevant because it's only the most variable probes
+```{r}
+#variance of every probe;
+vars <- rowVars(as.matrix(beta_final_all))
+summary(vars)
+names(vars) <- rownames(beta_final_all)
+head(vars)
+
+#order the variance, pick out top 1000 highest variance;
+vars_order <- vars[order(-vars)]
+var_beta <- beta_final_all[rownames(beta_final_all) %in% names(vars_order[1:1000]),]
+dim(var_beta)
+```
+```{r}
+library(gplots)
+#summary by groups aka cell types;
+tapply(pd_final_all_wbc$GR, pd_final_all_wbc$celltype, summary)
+
+#output to pdf
+pdf('06-19-19 Heatmaps of WBCs.pdf')
+
+#heatmap based on most WBC fractions - Granulocyte (split by median)
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final_all_wbc$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final_all_wbc$GR>0.73)],
+          main="Top Variable Probes - Granulocytes")
+#more hypermethylated 45+ are granulocytes;
+
+#heatmap based on most WBC fractions - CD4
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final_all_wbc$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final_all_wbc$CD4>0.44)],
+          main="Top Variable Probes - CD4 (CD45pos median)")
+#explains some of the hypermethylation in the large cells?
+
+#heatmap based on most WBC fractions - CD4
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final_all_wbc$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final_all_wbc$CD4>0.17)],
+          main="Top Variable Probes - CD4 (large cell median)")
+
+#heatmap based on most WBC fractions - B
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final_all_wbc$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final_all_wbc$B>0.18)],
+          main="Top Variable Probes - B cells")
+#large has some B cells (blue)
+
+#heatmap based on most WBC fractions - Monocyte
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final_all_wbc$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final_all_wbc$MO>0.09)],
+          main="Top Variable Probes - Monocytes")
+#large has some monocytes (blue)
+
+#heatmap based on most WBC fractions - CD8
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final_all_wbc$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final_all_wbc$CD8>0.0034)],
+          main="Top Variable Probes - CD8")
+#almost nothing
+
+#heatmap based on most WBC fractions - NK
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final_all_wbc$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final_all_wbc$NK>0.004)],
+          main="Top Variable Probes - NK")
+dev.off()
+```

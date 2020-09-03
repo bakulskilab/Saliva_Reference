@@ -1,0 +1,255 @@
+---
+title: "11-21-19 Saliva estimation"
+author: "Lauren Middleton"
+date: "11/21/2019"
+output: html_document
+---
+```{r}
+# Purpose:  graph the ewastools estimates of saliva samples - some figures and stats were updated in code 7.1
+#
+# Inputs:  "01-23-20 estimates_subset_id.csv" 
+#
+# Outputs:  plots and stats
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2020")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2020")
+```
+
+
+# Load in data and estimate with ewastools and saliva ref panel, fix things
+```{r}
+#run ewastools package with saliva reference panel
+library(ewastools)
+
+# Load datasets
+setwd("C:/Users/HP/Documents/Research 2019")
+pd_final_all <- readRDS("06-11-19 pd_final_all_samps.rds")
+beta_final_all <- readRDS("06-11-19 beta_final_all_samps.rds")
+
+out.1 <- estimateLC(meth = beta_final_all, ref = "lauren_saliva_ref")
+head(out.1)
+
+#make it a dataframe
+est <- as.data.frame(out.1)
+# View(est)
+
+#when package is live, use estimateLC from ewastools to get the cell proportion estimates:
+# estimates_subset_id <- estimateLC(beta_final, "saliva")
+
+#add sample names and cell types
+est$sample <- pd_final_all$Sample.ID
+est$celltype <- pd_final_all$celltype
+table(est$celltype)
+# CD45pos   large oragene   whole 
+#      20      18       4      18
+
+#make the cell type names nice
+est$celltype <- gsub("large", "Epithelial Fractions", est$celltype)
+est$celltype <- gsub("CD45pos", "Immune Fractions", est$celltype)
+est$celltype <- gsub("whole", "Whole Samples", est$celltype)
+est$celltype <- gsub("oragene", "Oragene Kits", est$celltype)
+table(est$celltype)
+
+#make the dataset into the long form
+library(tidyverse)
+saliva_long <- gather(est, cell_type_est, estimate, IC:Epi, factor_key=TRUE)
+
+#change proportions into percentages
+saliva_long$estimate <- saliva_long$estimate*100
+
+table(saliva_long$cell_type_est) #60 of each
+saliva_long$cell_type_est <- gsub("Epi", "Epithelial", saliva_long$cell_type_est)
+saliva_long$cell_type_est <- gsub("IC", "Immune", saliva_long$cell_type_est)
+table(saliva_long$cell_type_est) #60 of each
+
+# View(saliva_long)
+```
+
+
+# Subset full dataset into cell types
+```{r}
+table(saliva_long$celltype)
+# Epithelial Fractions     Immune Fractions         Oragene Kits        Whole Samples 
+#                   36                   40                    8                   36 
+
+#subset saliva_long into Immune
+immune_est <- saliva_long[saliva_long$celltype == "Immune Fractions", ]
+head(immune_est)
+table(immune_est$celltype)
+# Immune Fractions 
+#               40 
+
+#subset saliva_long into Epithelial
+epithelial_est <- saliva_long[saliva_long$celltype == "Epithelial Fractions", ]
+head(epithelial_est)
+table(epithelial_est$celltype)
+
+#subset saliva_long into Oragene
+oragene_est <- saliva_long[saliva_long$celltype == "Oragene Fractions", ]
+head(oragene_est)
+table(oragene_est$celltype)
+
+#subset saliva_long into Whole
+whole_est <- saliva_long[saliva_long$celltype == "Whole Fractions", ]
+head(whole_est)
+table(whole_est$celltype)
+```
+
+
+# Graph Immune estimates as spaghetti plot
+```{r}
+pdf("01-31-20 immune fraction ewastools spaghetti prediction.pdf")
+ggplot(data = immune_est, aes(x = cell_type_est, y = estimate, group = sample))+
+  geom_point(aes(color = sample), size = 3)+
+  geom_line(aes(color = sample), size = 1)+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  scale_y_continuous(breaks = seq(0,120,10),
+                     limits = c(0,120))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=20))+ #makes text bigger
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+dev.off()
+```
+
+
+# Graph Immune predictions as violin plot
+```{r}
+pdf("01-31-20 immune fraction ewastools prediction.pdf")
+ggplot(data = immune_est, aes(x = cell_type_est, y = estimate, fill = cell_type_est))+
+  geom_violin()+
+  geom_point(size = 2)+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  labs(title = "Immune fractions")+
+  scale_y_continuous(breaks = seq(0,120,10),
+                     limits = c(0,120))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=20))+ #makes text bigger
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  theme(legend.position="bottom")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+dev.off()
+```
+
+
+# Graph Epithelial predictions as violin plot
+```{r}
+pdf("01-31-20 epithelial fraction ewastools prediction.pdf")
+ggplot(data = epithelial_est, aes(x = cell_type_est, y = estimate, fill = cell_type_est))+
+  geom_violin()+
+  geom_point(size = 2)+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  labs(title = "Epithelial fractions")+
+  scale_y_continuous(breaks = seq(0,120,10),
+                     limits = c(0,120))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=20))+ #makes text bigger
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  theme(legend.position="bottom")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+dev.off()
+```
+
+
+# Graph Oragene predictions as violin plot
+```{r}
+pdf("01-31-20 oragene fraction ewastools prediction.pdf")
+ggplot(data = oragene_est, aes(x = cell_type_est, y = estimate, fill = cell_type_est))+
+  geom_violin()+
+  geom_point(size = 2)+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  labs(title = "Oragene samples")+
+  scale_y_continuous(breaks = seq(0,120,10),
+                     limits = c(0,120))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=20))+ #makes text bigger
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  theme(legend.position="bottom")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+dev.off()
+```
+
+
+# Graph Whole predictions as violin plot
+```{r}
+pdf("01-31-20 whole fraction ewastools prediction.pdf")
+ggplot(data = whole_est, aes(x = cell_type_est, y = estimate, fill = cell_type_est))+
+  geom_violin()+
+  geom_point(size = 2)+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  labs(title = "Whole samples")+
+  scale_y_continuous(breaks = seq(0,120,10),
+                     limits = c(0,120))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=20))+ #makes text bigger
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  theme(legend.position="bottom")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+dev.off()
+```
+
+
+
+# Make a panel figure of the four graphs - remade in code 7.1
+```{r}
+saliva_long$cell_type_est <- factor(saliva_long$cell_type_est,
+                                      levels = c("Immune", "Epithelial"))
+
+png("07-29-20 saliva estimates panel.png", width=1000, height=1000)
+ggplot(data = saliva_long, aes(x = cell_type_est, y = estimate, fill = cell_type_est))+
+  geom_violin(width = 0.5)+
+  #geom_point(size = 2)+
+  geom_jitter(width = 0.05, size = 3)+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  scale_y_continuous(breaks = seq(0,120,10),
+                     limits = c(-1,120))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=35))+ #makes text bigger
+  labs(fill = "Estimated Cell Types")+ #change the legend title
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  theme(legend.position="bottom")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())+
+  facet_wrap(vars(celltype))
+dev.off()
+```
+
+# Stats - updated in code 7.1

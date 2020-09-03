@@ -1,0 +1,76 @@
+---
+title: "06-18-19 Saliva Density Plot by Cell Type"
+author: "Lauren Middleton"
+date: "6/18/2019"
+output: html_document
+---
+```{r}
+# Purpose: Create Figure 3a (density plot)
+# 
+# Inputs:   pd_final   - details of sample fractions (epithelial and immune)
+#           beta_final - beta matrix of sample fractions (epithelial and immune)
+#
+# Outputs:  density plot figure
+```
+
+# Install car package for density plot;
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+#install.packages("car")
+```
+
+# Set up
+```{r}
+#load final demographics sample dataset;
+pd_final <- readRDS("06-11-19 pd_final.rds")
+
+#load beta_final;
+beta_final <- readRDS("06-11-19 beta_final.rds")
+```
+
+
+```{r}
+# select out the samples that are only 45pos and large cell types
+cd45pos_large <- pd_final[(pd_final$celltype) %in% c("large", "CD45pos"),]
+
+# select out the betas for these cell types - this pulls the specific columns;
+cd45pos_large_beta <- beta_final[ , cd45pos_large$meth_id]
+
+dim(cd45pos_large_beta) #795694  38
+cd45pos_large_beta[1:5,1:5]
+```
+
+
+# density plot
+```{r}
+library(minfi)
+palette(graphColors)
+
+png("06-18-19 Saliva Density Plot by Cell Type.png",
+    width=1200, height=1200);
+    par(mar=c(9, 9, 6, 2), mgp = c(3, 2, 0)) #mgp:(?,distance,moves axis line)
+#recolored
+densityPlot(cd45pos_large_beta,
+            sampGroups = pd_final$celltype,
+            #main = "Methylation profile by cell type",
+            ylim = c(0, 5),
+            xlab = "", #must do this to use mtext
+            legend = FALSE,
+            cex.lab = 4,
+            cex.axis = 4, 
+            #cex.main = 3,
+            pal = c("purple4", "lightsalmon1"))
+            mtext(text = "Percent DNA Methylation", #this increases the distance between x-axis and text
+                side = 1, #side 1 = bottom
+                line = 7, cex = 4)
+dev.off()
+
+# Which sample has the deviated density curve, marked by higher overall DNAm?
+# this code says 19, it's actually SAL_1CD45+
+max(colMedians(beta_final))
+colnames(beta_final)[colMedians(beta_final)==max(colMedians(beta_final))]
+head(pd_final)
+pd_final[pd_final$meth_id==colnames(beta_final)[colMedians(beta_final)==max(colMedians(beta_final))],]
+```

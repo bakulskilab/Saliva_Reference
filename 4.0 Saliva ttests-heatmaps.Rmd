@@ -1,0 +1,508 @@
+---
+title: "06-12-19 Saliva Ttest, Ftest, Variance, Heatmaps"
+author: "Lauren Middleton"
+date: "6/12/2019"
+output: html_document
+---
+```{r}
+# Purpose: Run t-tests between immune and epithelial fractions, construct heatmap, calculate global methylation
+# 
+# Inputs:   pd_final   - details of sample fractions (epithelial and immune)
+#           beta_final - beta matrix of sample fractions (epithelial and immune)
+#
+# Outputs:  heatmap for Figure 4b
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+```
+
+# Set up;
+```{r}
+#load in data files from 06-11-19;
+#these don't include whole or oragene or c45neg
+pd_final <- readRDS("06-11-19 pd_final.rds")
+beta_final <- readRDS("06-11-19 beta_final.rds")
+
+#check that the load happened correctly;
+head(pd_final)
+```
+
+
+# Install genefilter package from bioconductor;
+```{r setup, include = FALSE}
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+#BiocManager::install("genefilter")
+```
+
+
+# Make dummy vars for cell types;
+```{r}
+pd_final$cd45pos <-ifelse(pd_final$celltype =="CD45pos", 1, 0)
+pd_final$large <-ifelse(pd_final$celltype =="large", 1, 0)
+
+#check the coding;
+table(pd_final$celltype, pd_final$large)
+table(pd_final$celltype, pd_final$cd45pos)
+  #          0  1
+  # CD45pos 20  0
+  # large    0 18
+```
+
+
+# Run row ttests;
+```{r}
+library(genefilter)
+#do a row ttest of one cell types against all other cell types within one probe;
+#don't really need both but here they are
+ttest_cd45pos <- rowttests(as.matrix(beta_final), as.factor(pd_final$cd45pos), tstatOnly = FALSE)
+ttest_large <- rowttests(as.matrix(beta_final), as.factor(pd_final$large), tstatOnly = FALSE)
+```
+
+
+# How many probes are significant at 1e-8 for rowttest of one cell vs other two;
+## doing lower p value because larger chance of getting <0.05
+```{r}
+length(which(ttest_cd45pos$p.value<1e-8)) #164793
+length(which(ttest_large$p.value<1e-8)) #164793
+```
+
+
+# Subset beta_final into cell types;
+```{r}
+# check that order meth_ID in pd file = columns in beta matrix;
+identical(colnames(beta_final), pd_final$meth_id) #TRUE
+
+# select out the samples that are only 45pos and large cell types
+cd45pos_large <- pd_final[(pd_final$celltype) %in% c("large", "CD45pos"),]
+# select out the betas for these cell types - this pulls the specific columns;
+cd45pos_large_beta <- beta_final[ , cd45pos_large$meth_id]
+```
+
+
+------------------------------------------------------------------------------------------------------
+# Row ttest of one cell type vs one cell type;
+```{r}
+#positive vs large cells
+ttest_cd45pos_large <- rowttests(as.matrix(cd45pos_large_beta),
+                                 as.factor(cd45pos_large$cd45pos),
+                                 tstatOnly = FALSE)
+```
+
+# How many probes are significant at 10^-8 for rowttest of one cell type vs one cell type;
+#doing lower p value because larger chance of getting <0.05
+#cd45- might not be a distinct cell type;
+```{r}
+#length(which(ttest_cd45neg_large$p.value<1e-8)) #0
+length(which(ttest_cd45pos_large$p.value<1e-8)) #164793
+```
+
+------------------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------------------------
+# Set up for making heatmaps
+
+# Set up for making heatmaps - Variance; 
+```{r}
+library(gplots)
+library(genefilter) #for rowVars
+
+#variance of every probe;
+vars <- rowVars(as.matrix(beta_final))
+summary(vars)
+names(vars) <- rownames(beta_final)
+head(vars)
+
+#order the variance, pick out top 1000 highest variance;
+vars_order <- vars[order(-vars)]
+var_beta <- beta_final[rownames(beta_final) %in% names(vars_order[1:1000]),]
+dim(var_beta)
+```
+
+# Histogram of variance of probes;
+```{r}
+hist(vars, main = "Variance of probes",
+     ylab = "Count",
+     xlab = "Variance",
+     cex.lab = 1.5)
+```
+
+
+# Set up for making heatmaps - ttest; 
+```{r}
+#order the ttests;
+#ttest_cd45neg<-ttest_cd45neg[order(ttest_cd45neg$p.value),]
+ttest_cd45pos <- ttest_cd45pos[order(ttest_cd45pos$p.value), ]
+ttest_large <- ttest_large[order(ttest_large$p.value), ]
+
+#take only the top 500 ttests for each cell type;
+top.t <- c(rownames(ttest_cd45pos)[1:500],
+           rownames(ttest_large)[1:500])
+
+#take out only the specified probes from top.t
+top.t.beta <- beta_final[top.t, ]
+
+#write.csv(top.t.beta, "06-12-19 top 500 ttests by cell types.csv")
+```
+
+------------------------------------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------------------------------------
+# Make the heatmaps
+```{r}
+#make a heatmap;
+myColors <- c("purple4",
+              "lightsalmon1",
+              "darkorchid",
+              "firebrick1",
+              "khaki1",
+              "azure4",
+              "black")
+
+mydist <- function(x) dist(x,method="euclidean")
+
+myfun <- function(x) hclust((dist((x),method="euclidean")),method="ward")
+
+```
+
+
+# Make the heatmaps of cell type specific signatures - Variance;
+```{r}
+#heatmap based on most variable probes
+par(mar=c(2,4,4,1)+.1, oma=c(3,1,0,0))
+pdf("06-12-19 Heatmap Variable Probes.pdf")
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final$celltype)],
+          main="Top 500 Variable Probes",
+          margins = c(8, 4))
+dev.off()
+```
+
+
+# Make the heatmaps of t-test - edited 2/16/20
+```{r}
+#ttest - separates groups a little better than variance;
+png("06-12-19 Top 500 Ttest.png", width=1200, height=800);
+    par(mar=c(9, 9, 6, 2))
+heatmap.2(as.matrix(top.t.beta), labRow=NA, labCol=NA, col=redblue(256),
+          lhei = c(1,7),
+          density.info="none", trace="none",
+          dendrogram="column", #labCol=pd_final$Sample.ID,
+          ColSideColors = myColors[as.factor(pd_final$celltype)],
+          distfun = mydist, hclustfun = myfun,
+          #main="Top 500 T Tests",
+          key.title = "% DNA Methylation",
+          key.xlab = "% DNA Methylation",
+          cex.xlab = 3,
+          cex.main = 3)
+
+dev.off()
+```
+
+# Make pdf of the previous heatmaps (variance, t-test)
+```{r}
+#output the heatmaps as a pdf;
+pdf("06-12-19 noob-Drop-Saliva-heatmap-cell-type-all.pdf")
+
+#heatmap based on top 500 most variable probes
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final$celltype)],
+          main="Top 500 Variable Probes",
+          margins = c(8, 4))
+
+#ttest - separates groups a little better than variance;
+heatmap.2(as.matrix(top.t.beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none",
+          dendrogram="column", labCol=pd_final$Sample.ID,
+          ColSideColors = myColors[as.factor(pd_final$celltype)],
+          distfun = mydist, hclustfun = myfun, main="Top 500 T Tests",
+          margins = c(8,4))
+dev.off()
+```
+
+
+# Make the heatmaps of cell type specific signatures - Variance (including person ID);
+```{r}
+library(gplots)
+#install.packages("grDevices")
+
+#output the heatmaps as a pdf;
+pdf("06-24-19 Saliva cell types heatmap.pdf")
+
+#heatmap based on most variable probes - age.r (blue = >12yrs)
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final$age.r>12)],
+          main="Top Variable Probes - Age >12")
+
+#heatmap based on most variable probes - Sick
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final$Sick)],
+          main="Top Variable Probes - Sick")
+
+#heatmap based on most variable probes - Race
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final$white_bin)],
+          main="Top Variable Probes - Race")
+
+#heatmap based on most variable probes - total cells
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final$cell_count>8e6)],
+          main="Top Variable Probes - Total Cells")
+
+#heatmap based on most variable probes - batch
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final$batch)],
+          main="Top Variable Probes - Batch")
+
+#heatmap based on most variable probes - viability
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final$viability>50)],
+          main="Top Variable Probes - Viability >50%")
+
+#heatmap based on most variable probes - Median Methylation Intensity - QC
+heatmap.2(as.matrix(var_beta), labRow=NA, col=redblue(256),
+          density.info="none", trace="none", 
+          dendrogram="column", labCol=pd_final$Sample.ID,
+          ColSideColors=myColors[as.factor(pd_final$MQC<11.16)],
+          main="Top Variable Probes - Median Methylation Intensity (QC)")
+
+dev.off()
+```
+
+------------------------------------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------------------------------------
+
+#histogram of differences in DNA meth of CD45+ vs others; - edited 2/17/20
+```{r}
+head(ttest_cd45pos) #dm is the difference;
+
+#selecting only probes that meet this p value threshold;
+cd45pos_sig <- ttest_cd45pos[ttest_cd45pos$p.value < 1e-08, ]
+
+#histogram of dm from selected probes;
+#multiply by -1 because the ttest is doing all vs pos instead of pos vs all;
+hist(cd45pos_sig$dm*-100,
+     main = "Mean Methylation Difference (p<1e-08)",
+     xlim = c(-100, 100),
+     xlab = "Higher methylation in Large    Higher methylation in CD45+",
+     sub = "Difference in Mean Methylation between CD45+ and Large",
+     cex.lab = 1.3,
+     cex.sub = 1)
+#more positive differences;
+
+png("06-12-19 Mean Methylation Difference.png", width = 1600, height = 1000);
+  par(mar=c(9, 11, 9, 2), mgp = c(3, 2, 0)) #mgp:(?,distance,moves axis line)
+h = hist(cd45pos_sig$dm*-100, breaks=15,plot=FALSE)
+ccat = cut(h$breaks, c(-Inf, -0.001, Inf))
+plot(h, col=c("lightsalmon1", "purple4")[ccat],
+     #main = "Mean Methylation Difference (p<1e-08)",
+     main = "",
+     xlim = c(-100, 100),
+     xlab = "",
+     ylab = "",
+     #xlab = "Higher methylation in Epithelial    Higher methylation in Immune",
+     #sub = "Difference in Mean Methylation between Immune and Epithelial cells",
+     cex.lab = 4,
+     cex.axis = 3,
+     cex.sub = 4)
+mtext(text = "Difference in Mean Methylation between Immune and Epithelial cells", #this increases the distance between x-axis and text
+                side = 1, #side 1 = bottom
+                line = 7, cex = 4)
+mtext(text = "Frequency", #this increases the distance between y-axis and text
+                side = 2, #side 1 = bottom
+                line = 7, cex = 4)
+dev.off()
+```
+
+
+# DNAm in epithelial vs immune
+```{r}
+#selecting only probes that meet p value threshold;
+cd45large_sig <- ttest_large[ttest_large$p.value < 1e-08, ]
+#largest magnitude of difference is 70.2% at cg07110356, p = 1.157e-22
+```
+
+# DNAm in immune vs epithelial
+```{r}
+#selecting only probes that meet p value threshold;
+cd45pos_sig <- ttest_cd45pos[ttest_cd45pos$p.value < 1e-08, ]
+#largest magnitude of difference is 68.6% at cg17804342, p = 1.611e-20
+```
+
+
+#histogram of differences in DNA meth of large vs others;
+```{r}
+head(ttest_large) #dm is the difference;
+
+#selecting only probes that meet this p value threshold;
+cd45large_sig <- ttest_large[ttest_large$p.value < 1e-08, ]
+
+#histogram of dm from selected probes;
+#multiply by -1 because the ttest is doing all vs large instead of large vs all;
+hist(cd45large_sig$dm*-1)
+#more negative differences;
+```
+
+
+# Subset saliva probes to top 1000 most different from t-test
+```{r}
+#load files
+beta_final <- readRDS("06-11-19 beta_final.rds")
+pd_final <- readRDS("06-11-19 pd_final.rds")
+
+#create dummy vars
+pd_final$cd45pos <-ifelse(pd_final$celltype =="CD45pos", 1, 0)
+pd_final$large <-ifelse(pd_final$celltype =="large", 1, 0)
+
+#do row ttest
+library(genefilter)
+ttest_cd45pos <- rowttests(as.matrix(beta_final), as.factor(pd_final$cd45pos), tstatOnly = FALSE)
+
+#ttest of pos vs large
+cd45pos_large <- pd_final[(pd_final$celltype) %in% c("large", "CD45pos"),]
+cd45pos_large_beta <- beta_final[ , cd45pos_large$meth_id]
+ttest_cd45pos_large <- rowttests(as.matrix(cd45pos_large_beta),
+                                 as.factor(cd45pos_large$cd45pos),
+                                 tstatOnly = FALSE)
+#order the ttests;
+ttest_cd45pos <- ttest_cd45pos[order(ttest_cd45pos$p.value), ]
+
+#take only the top 500 ttests for each cell type - end up with 500;
+#this is probe names
+top.t <- c(rownames(ttest_cd45pos)[1:500])
+#take top 500 ttest values
+top.t_sep <- ttest_cd45pos[1:500, ]
+table(top.t_sep$dm*-100 >0)
+#468 of the top 500 are hyper meth in immune
+
+
+#take out only the specified probes from top.t
+top.t.beta <- beta_final[top.t, ]
+
+#subset the saliva probes
+beta_saliva_top.t <- intersect(rownames(beta_final), rownames(top.t.beta))
+length(beta_saliva_top.t) #500
+
+#keeps the order of the probes the same - grab only these probes
+beta_saliva_ttest <- beta_final[beta_saliva_top.t, ]
+dim(beta_saliva_ttest) #500  38
+
+#FINISH
+library(minfi)
+png("07-30-19 saliva density probe subset.png", height = 500, width = 800)
+densityPlot(beta_saliva_ttest,
+            sampGroups = pd_final$celltype,
+            pal = c("darkmagenta", "darkgreen"))
+dev.off()
+
+
+#only print one sample
+densityPlot(beta_saliva_ttest[,5],
+            sampGroups = pd_final$celltype[5,],
+            pal = c("darkmagenta", "darkgreen"))
+```
+
+
+# Global methylation
+```{r}
+pd_final <- readRDS("06-11-19 pd_final.rds")
+beta_final <- readRDS("06-11-19 beta_final.rds")
+
+#put them in the same order
+beta_final <- beta_final[ ,pd_final$meth_id]
+
+#mean for each fraction
+globalDNAm <- colMeans(beta_final)
+
+#add to the pd_final
+pd_final$globalDNAm <- globalDNAm
+
+#ttest (global dnam vs cell type) for immune cells
+test <- lm(globalDNAm ~ celltype, data=pd_final)
+summary(test)
+#                Estimate Std. Error t value Pr(>|t|)    
+# (Intercept)    0.575292   0.002302  249.89  < 2e-16 ***
+# celltypelarge -0.043234   0.003345  -12.93 4.34e-15 ***
+
+#global methylation of epithelial cells
+pd_new <- pd_final
+pd_new$celltype <- factor(pd_final$celltype)
+pd_new$celltype <- relevel(pd_new$celltype, ref = "large")
+
+test2 <- lm(globalDNAm ~ celltype, data=pd_new)
+summary(test2)
+#                 Estimate Std. Error t value Pr(>|t|)    
+# (Intercept)     0.532058   0.002427  219.25  < 2e-16 ***
+# celltypeCD45pos 0.043234   0.003345   12.93 4.34e-15 ***
+```
+
+
+# Set up - Box plot of global methylation
+```{r}
+#run code in previous section
+
+#make the dataset based on previous section
+#57.5 s.e.: 0.2 - immune
+#53.2 s.e.: 0.2 - epithelial
+global_meth <- pd_final[, c("Sample.ID", "globalDNAm", "celltype")]
+
+#make the estimated cell type values nice
+global1$celltype <- gsub("CD45pos", "Immune", global_meth$celltype)
+global2 <- gsub("large", "Epithelial", global1$celltype)
+global_meth$celltype <- global2
+
+#change the proportions to percents
+global_meth$globalDNAm <- global_meth$globalDNAm * 100
+
+
+library(ggplot2)
+```
+
+
+# Make Box plot of global methylation
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2020")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2020")
+setwd("~/Research 2020")
+
+png("04-17-20 global DNAm boxplot.png", width=600, height=600)
+ggplot(global_meth, aes(x = celltype, y = globalDNAm, fill = celltype))+ 
+  geom_boxplot()+
+  labs(x = "Cell Type", y = "Global DNA methylation (%)")+
+  scale_y_continuous(breaks = seq(0,100,10),
+                     limits = c(40,70))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=30))+ #makes text bigger
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  scale_fill_manual(values=c("lightsalmon1", "purple4"))+
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))
+dev.off()
+```
+
+

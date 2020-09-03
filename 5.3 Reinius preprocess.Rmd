@@ -1,0 +1,517 @@
+---
+title: "07-31-19 Reineus preprocess"
+author: "Lauren Middleton"
+date: "7/31/2019"
+output: html_document
+---
+```{r}
+# Purpose:  Preprocess and QC the Reinius dataset
+#
+# Inputs:   https://bioconductor.org/packages/release/data/experiment/html/FlowSorted.Blood.450k.html
+#
+# Outputs:  "07-31-19 reineus pd.qc.rds"
+#           "07-31-19 reineus pd"
+#           "07-31-19 reineus minfi-detP.rda"
+#           "07-31-19 reineus noob.rds"
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+```
+## Have to use minfi because starting with RGset
+
+# Loading in the RGset of WBCs
+```{r}
+#loading in the RGset of WBCs
+#https://bioconductor.org/packages/release/data/experiment/html/FlowSorted.Blood.450k.html
+library(FlowSorted.Blood.450k)
+data(FlowSorted.Blood.450k)
+
+table(pData(FlowSorted.Blood.450k)$CellType)
+
+#remove the unsorted samples
+wbc_sorted <- FlowSorted.Blood.450k[ , !pData(FlowSorted.Blood.450k)$CellType %in% c("WBC", "PBMC", "Gran")]
+
+table(wbc_sorted$CellType) #42 samples
+# Bcell  CD4T  CD8T   Eos  Mono   Neu    NK 
+#     6     6     6     6     6     6     6 
+```
+
+
+# Load minfi library
+```{r}
+library(minfi)
+library(magrittr)
+```
+
+
+# Overall intensity: M vs. U
+```{r}
+#this is the equivalent of processing the RGset
+rawMSet <- preprocessRaw(wbc_sorted)
+rawMSet #s4 object (still includes the unsorted samples?)
+
+#the rawMSet doesn't have the unsorted samples
+table(pData(rawMSet)$CellType)
+
+#M signal per probe, per sample
+Meth <- getMeth(rawMSet)
+Meth[1:5,1:5]
+
+#U signal per probe, per sample
+Unmeth <- getUnmeth(rawMSet)
+Unmeth[1:5,1:5]
+
+#find median methylation and unmethylation per sample using all probes
+MQC <- log2(colMedians(Meth))
+UQC <- log2(colMedians(Unmeth))
+
+#put all the intensities into one data frame
+colnames(Meth) #column names are each sample name
+intensities <- data.frame(meth_id = colnames(Meth), MQC = MQC, UQC = UQC)
+str(intensities) #data frame
+dim(intensities) #42  3
+```
+
+
+# Make a pd file from the annotation info in rawMSet
+```{r}
+pd <- pData(rawMSet)
+class(pd)
+dim(pd)
+
+head(pd)
+dim(pd) #42  8
+
+
+#append intensities to pd 
+head(intensities) #meth_id
+head(pd)
+pd.int <- merge(pd, intensities, by.x = "Sample_Name", by.y = "meth_id")
+dim(pd.int) #42 10
+pd <- pd.int
+#assign the sample names to the row names of pd
+View(pd)
+rownames(pd) <- pd$Sample_Name
+# table(rownames(pd) %in% colnames(beta)) #42 TRUE
+View(pd)
+
+setwd("C:/Users/HP/Documents/Research 2019")
+saveRDS(pd, file = "07-31-19 reineus pd.rds")
+```
+
+
+#plot M vs U
+```{r}
+#set colors
+colors = c("yellow",
+           "orange",
+           "red",
+           "purple",
+           "blue",
+           "darkgreen",
+           "turquoise1",
+           "sienna",
+           "violetred",
+           "plum2",
+           "slategray",
+           "black")
+
+#plot M vs U colored by slide
+plot(intensities$UQC, intensities$MQC,
+     col = colors[as.factor(rawMSet$Slide)],
+     main = "M vs. U QC by Slide",
+     pch = 16,
+     xlab = "Log2 Median Unmethylated Intensity", ylab="Log2 Median Methylated Intensity",
+     cex.lab = 1.2, cex.main = 2)
+legend("topleft", legend = levels(as.factor(rawMSet$Slide)), fill = colors, title = "Slide", cex = 0.8)
+
+table(pd$Slide, pd$CellType)
+  #            Bcell CD4T CD8T Eos Mono Neu NK
+  # 5684819001     0    3    0   0    0   0  0
+  # 5684819004     3    0    3   0    3   0  3
+  # 5727920027     0    3    0   0    0   0  0
+  # 5727920033     3    0    3   0    3   0  3
+  # 5727920038     0    0    0   6    0   6  0
+table(pd$Slide, pd$SampleID)
+  #            043 105 149 160 218 261
+  # 5684819001   0   1   0   0   1   1
+  # 5684819004   0   4   0   0   4   4
+  # 5727920027   1   0   1   1   0   0
+  # 5727920033   4   0   4   4   0   0
+  # 5727920038   2   2   2   2   2   2
+
+#plot M vs U colored by Cell type
+plot(intensities$UQC, intensities$MQC,
+     col = colors[as.factor(rawMSet$CellType)],
+     main = "M vs. U QC by Cell Type",
+     pch = 16,
+     xlab = "Log2 Median Unmethylated Intensity", ylab="Log2 Median Methylated Intensity",
+     cex.lab = 1.2, cex.main = 2)
+legend("topleft", legend = levels(as.factor(rawMSet$CellType)),
+       fill = colors, title = "Cell Type", cex = 0.8)
+
+#plot M vs U colored by Array
+plot(intensities$UQC, intensities$MQC,
+     col = colors[as.factor(rawMSet$Array)],
+     main = "M vs. U QC by Array",
+     pch = 16,
+     xlab = "Log2 Median Unmethylated Intensity", ylab="Log2 Median Methylated Intensity",
+     cex.lab = 1.2, cex.main = 2)
+legend("topleft", legend = levels(as.factor(rawMSet$Array)),
+       fill = colors, title = "Array", cex = 0.7)
+```
+
+
+# Make density plot
+```{r}
+#Raw density plot
+beta.raw <- getBeta(rawMSet)
+
+densityPlot(beta.raw,
+            sampGroups = pd$CellType,
+            main="Cell Type",
+            xlim = c(0.0, 1.2),
+            ylim = c(0.0, 4))
+
+rm(beta.raw, intensities, Meth,MQC,Unmeth,UQC, rawMSet, pd.int)
+```
+
+
+# Calculate detP
+```{r}
+library(minfi)
+class(wbc_sorted)
+detP <- minfi::detectionP(wbc_sorted)
+dim(detP) #485512     60
+detP[1:5, 1:5] #samples on the columns, probes on the rows
+
+save(detP, file = "07-31-19 reineus minfi-detP.rda")
+```
+
+
+# Sample and Probe fails
+```{r}
+load("07-31-19 reineus minfi-detP.rda")
+
+#0.01 is arbitrary
+failedP <- detP > 0.01
+
+# Fraction of failed positions per sample
+per.samp <- colMeans(failedP) 
+summary(per.samp)
+
+# Fraction of failed samples per position
+per.probe <- rowMeans(failedP)
+summary(per.probe)
+
+#How many samples had more than 5% of sites fail?
+sum(per.samp > 0.05) #0
+
+# How many positions failed in at least 5% of samples? 
+sum(per.probe > 0.05) #578
+
+# How many positions failed in at least 1 samples? 
+sum(per.probe > 0.01) #1057
+```
+
+# Histograms of failed probes and samples
+```{r}
+hist(per.samp,
+     breaks=20,
+     xlab='Fraction of Failed Positions Per Sample',
+     main='All Samples')
+
+hist(per.samp[per.samp<0.2],
+     breaks=30,
+     xlab='Fraction of Failed Positions Per Sample',
+     main='Samples with <20% Failed Probes')
+
+hist(per.probe, 
+     breaks=20,
+     xlab='Fraction of Failed Samples Per Position',
+     main='All Probes')
+
+hist(per.probe[per.probe<0.15],
+     xlab='Fraction of Failed Samples Per Position',
+     main='Probes with <15% Samples Failed')
+```
+
+
+# Put detp fail rate info into the pd data frame
+```{r}
+pd$mf_probe_fail_pct <- per.samp[pd$Sample_Name]
+head(pd)
+
+saveRDS(pd, file = "07-31-19 reineus pd.qc.rds")
+```
+
+
+# Noob and get betas
+```{r}
+noob <- preprocessNoob(wbc_sorted, offset=15, dyeCorr=TRUE, verbose = TRUE)
+
+saveRDS(noob, file = "07-31-19 reineus noob.rds")
+
+
+noob <- readRDS('07-31-19 reineus noob.rds')
+
+beta <- getBeta(noob)
+
+#pd <- readRDS('pd.qc.rds')
+```
+
+
+# 
+```{r}
+#assign the sample names to the row names of pd
+View(pd)
+rownames(pd) <- pd$Sample_Name
+table(rownames(pd) %in% colnames(beta)) #42 TRUE
+View(pd)
+
+colnames(beta) #these are in a different order
+pd <- pd[colnames(beta),]
+
+identical(colnames(beta), rownames(pd)) #TRUE
+
+```
+
+
+# Dropping probes
+```{r}
+#skipping snp comparison because minfi can't do that
+
+#this has only the failed probes- if a probe fails in >5% it gets dropped
+detp_fail <- per.probe[per.probe >0.01]
+
+#checking the number is the same;
+length(detp_fail) #1057
+head(detp_fail)
+
+#get the probe names
+detp_fail <- names(detp_fail)
+
+#starting with this many probes;
+dim(beta) #485512     42
+
+#keep anything that is not the failed row names;
+beta_nodetp <- beta[!rownames(beta) %in% detp_fail, ]
+dim(beta_nodetp) #484455     42
+```
+
+
+# Drop cross reactive probes;
+```{r}
+cross_probes <- read.csv("48639-non-specific-probes-Illumina450k.csv")
+head(cross_probes) #Probe is an actual column here as opposed to row names;
+
+#Number of cross reactive probes;
+dim(cross_probes) #29233
+
+#this drops all cross reactive probes;
+beta_nocross <- beta_nodetp[!rownames(beta_nodetp) %in% cross_probes$"ï..TargetID", ]
+dim(beta_nocross) #455273     42
+```
+
+# Dropping X and Y chromosome probes;
+```{r}
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+
+data(Locations) #load locations data from illumina;
+head(Locations) #X and Y chromosomes are called "chrX" or "chrY";
+#make a dataset of only X and Y;
+sex_probes <- Locations[Locations$chr == "chrX" | Locations$chr == "chrY", ] 
+dim(sex_probes) #11648
+
+#check first 5 rows and columns of beta_nocross dataset;
+beta_nocross[1:5, 1:5] 
+
+#keeping rownames that is not in x and y probes;
+beta_noXY <- beta_nocross[!rownames(beta_nocross) %in% rownames(sex_probes), ]
+
+#check dimensions of dataset without x and y probes;
+dim(beta_noXY) #444611     42
+```
+
+
+# Check the order of pd and beta_noXY
+```{r}
+identical(rownames(pd), colnames(beta_noXY)) #TRUE
+# don't need to re order anything
+
+beta_final_wbc <- beta_noXY
+
+#save the beta matrix - all probe info, rows = probes, columns = samples, data = % methylation;
+saveRDS(beta_final_wbc, file = "07-31-19 beta_final_wbc.rds")
+
+#this includes the subsetted sample data (demographic data);
+saveRDS(pd, file = "07-31-19 reineus pd.rds")
+```
+
+
+# Make a PCA
+```{r}
+beta_final_wbc <- readRDS("07-31-19 beta_final_wbc.rds")
+prin <- prcomp(t(beta_final_wbc), center = T, scale. = F)
+#save(prin,file='pcs-beta.rda')
+
+colnames(pd)
+rownames(pd)
+rownames(prin$x)
+pc_pd <- merge(pd, prin$x, by.x = "row.names", by.y = "row.names")
+head(pc_pd)
+
+#load('pcs-beta.rda')
+#pd <- readRDS('pd.qc.rds')
+
+library(ggplot2)
+#amount of variance explained by each PC
+screeplot(prin)
+proportion <- summary(prin)
+str(proportion)
+head(proportion$importance)
+class(proportion$importance)
+#this has the useful thing
+proportion <- proportion$importance["Proportion of Variance", ]
+#                            PC1     PC2      PC3      PC4     PC5 
+# Standard deviation     35.1853 16.4826 14.84362 11.36295 8.45987 
+# Proportion of Variance  0.5308  0.1165  0.09447  0.05536 0.03068 
+# Cumulative Proportion   0.5308  0.6473  0.74173  0.79708 0.82777
+
+#make a variable with Proportion of Variance for PC1-8
+prop_var <- data.frame(PC = names(proportion[1:5]),
+                       Proportion = proportion[1:5])
+prop_var
+
+ggplot(data = prop_var, aes(x = PC, y = Proportion)) +
+  geom_bar(stat = "identity")+ #identity = heights of the bars represent actual data values
+#        ylim(0, 1.0)+ #set y axis limit as 1.0
+        scale_y_continuous(limits=c(0, 0.6), breaks = seq(0, 1.0, 0.1))+
+        theme(axis.title = element_text(size = 20))+
+        theme_minimal()+
+        theme_bw()+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+```
+
+
+# now do the PCA
+```{r}
+colors = c("yellow",
+           "orange",
+           "red",
+           "purple",
+           "blue",
+           "darkgreen",
+           "turquoise1",
+           "sienna",
+           "violetred",
+           "plum2",
+           "slategray")
+colnames(pc_pd)
+
+#plot wbc 
+pairs(pc_pd[, 13:17], col = as.factor(pc_pd$CellType), lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pc_pd$CellType)), fill = as.factor(pc_pd$CellType) %>% as.numeric %>% as.factor %>% levels, title = "Cell Type")
+
+#plot by slide
+pairs(pc_pd[, 13:17], col = as.factor(pc_pd$Slide), lower.panel = NULL)
+par(xpd = TRUE)
+legend("bottomleft", legend = levels(as.factor(pc_pd$Slide)), fill = as.factor(pc_pd$Slide) %>% as.numeric %>% as.factor %>% levels, title = "Slide")
+```
+
+
+# Run categorical comparisons to PCs
+```{r}
+readRDS("07-31-19 reineus pd")
+
+colnames(pc_pd)
+cat_vars <- c("Slide", "Array", "SampleID", "CellType")
+cat_vars
+head(pc_pd)
+
+corr_categ_pc1 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_pd$PC1 ~ pc_pd[,var]))
+})
+corr_categ_pc2 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_pd$PC2 ~ pc_pd[,var]))
+})
+corr_categ_pc3 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_pd$PC3 ~ pc_pd[,var]))
+})
+corr_categ_pc4 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_pd$PC4 ~ pc_pd[,var]))
+})
+corr_categ_pc5 <- sapply(cat_vars, FUN = function(var) {
+  summary(aov(pc_pd$PC5 ~ pc_pd[,var]))
+})
+
+corr_categ_pc1$Slide
+```
+
+
+#Set up to visualize the categorical associations
+```{r}
+library(gplots)
+corr_categ_pc1$Slide$`Pr(>F)`
+
+#first generate the matrix
+p_matrix_categ <- matrix(nrow = 5, ncol = 4)
+rownames(p_matrix_categ) <- c("PC1", "PC2", "PC3", "PC4", "PC5")
+colnames(p_matrix_categ) <- c("Slide", "Array", "SampleID", "CellType")
+p_matrix_categ
+
+
+#Get the info for "Slide", "Array", "SampleID", "CellType"
+
+#Slide, assign p-values to each cell
+p_matrix_categ["PC1", "Slide"] <- corr_categ_pc1$Slide["pc_pd[, var]", "Pr(>F)"]
+p_matrix_categ["PC2", "Slide"] <- corr_categ_pc2$Slide["pc_pd[, var]", "Pr(>F)"]
+p_matrix_categ["PC3", "Slide"] <- corr_categ_pc3$Slide["pc_pd[, var]", "Pr(>F)"] 
+p_matrix_categ["PC4", "Slide"] <- corr_categ_pc4$Slide["pc_pd[, var]", "Pr(>F)"] 
+p_matrix_categ["PC5", "Slide"] <- corr_categ_pc5$Slide["pc_pd[, var]", "Pr(>F)"]
+
+#Array
+p_matrix_categ["PC1", "Array"] <- corr_categ_pc1$Array["pc_pd[, var]", "Pr(>F)"] 
+p_matrix_categ["PC2", "Array"] <- corr_categ_pc2$Array["pc_pd[, var]", "Pr(>F)"] 
+p_matrix_categ["PC3", "Array"] <- corr_categ_pc3$Array["pc_pd[, var]", "Pr(>F)"]
+p_matrix_categ["PC4", "Array"] <- corr_categ_pc4$Array["pc_pd[, var]", "Pr(>F)"] 
+p_matrix_categ["PC5", "Array"] <- corr_categ_pc5$Array["pc_pd[, var]", "Pr(>F)"] 
+  
+#SampleID
+p_matrix_categ["PC1", "SampleID"] <- corr_categ_pc1$SampleID["pc_pd[, var]", "Pr(>F)"] 
+p_matrix_categ["PC2", "SampleID"] <- corr_categ_pc2$SampleID["pc_pd[, var]", "Pr(>F)"]  
+p_matrix_categ["PC3", "SampleID"] <- corr_categ_pc3$SampleID["pc_pd[, var]", "Pr(>F)"] 
+p_matrix_categ["PC4", "SampleID"] <- corr_categ_pc4$SampleID["pc_pd[, var]", "Pr(>F)"]  
+p_matrix_categ["PC5", "SampleID"] <- corr_categ_pc5$SampleID["pc_pd[, var]", "Pr(>F)"] 
+
+#CellType
+p_matrix_categ["PC1", "CellType"] <- corr_categ_pc1$CellType["pc_pd[, var]", "Pr(>F)"]
+p_matrix_categ["PC2", "CellType"] <- corr_categ_pc2$CellType["pc_pd[, var]", "Pr(>F)"]
+p_matrix_categ["PC3", "CellType"] <- corr_categ_pc3$CellType["pc_pd[, var]", "Pr(>F)"]
+p_matrix_categ["PC4", "CellType"] <- corr_categ_pc4$CellType["pc_pd[, var]", "Pr(>F)"] 
+p_matrix_categ["PC5", "CellType"] <- corr_categ_pc5$CellType["pc_pd[, var]", "Pr(>F)"]
+
+
+p_matrix_categ
+```
+
+
+# Make heatmap of pc~demog variables
+```{r}
+my_palette <- colorRampPalette(c("red", "yellow", "white"))
+
+heatmap.2(t(p_matrix_categ),
+          trace = "none",
+          dendrogram = "none",
+          key = TRUE, keysize = 1.5,
+          col = my_palette,
+          breaks = c(seq(0,0.1,length=100),
+                         seq(0.11,0.2,length=100),
+                         seq(0.21,1, length=100)),
+          margins = c(5, 7))
+```

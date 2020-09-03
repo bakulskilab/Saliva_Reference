@@ -1,0 +1,207 @@
+---
+title: "12-29-19 RMSE Calculation"
+author: "Lauren Middleton"
+date: "12/29/2019"
+output: html_document
+---
+```{r}
+# Purpose:  compare the estimates made by encode-reinius and ewastools
+#
+# Inputs:   "12-05-19 Compiled cell proportions.csv" - cell proportion estimates from ewastools, epidish, and cellprofiler attempt
+#
+# Outputs:  plots - supp figure 7 and stats
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+```
+
+
+# Estimate the cell proportions
+```{r}
+library(ewastools)
+library(tidyverse)
+setwd("~/Research 2019")
+
+#load beta matrix and descriptives
+beta_final_all <- readRDS("06-11-19 beta_final_all_samps.rds")
+pd_final_all <- readRDS("06-11-19 pd_final_all_samps.rds")
+
+#check that the order of pd_final_all$meth is the same as beta_final_all columns
+beta_meth <- colnames(beta_final_all)
+pd_meth <- pd_final_all$meth_id
+beta_meth == pd_meth #all TRUE
+
+#add the names of samples (Sample.ID) to colnames of beta matrix
+if(pd_final_all$meth_id == colnames(beta_final_all)){
+   colnames(beta_final_all) <- pd_final_all$Sample.ID
+  }
+
+
+#make the cell proportion estimates
+saliva <- estimateLC(beta_final_all, ref = "lauren_saliva_ref")
+
+#add column for sample id and celltype
+saliva$id <- pd_final_all$id
+saliva$celltype <- pd_final_all$celltype
+
+#change rownames
+rownames(saliva) <- pd_final_all$Sample.ID
+#add rownames column
+saliva$sample_id <- rownames(saliva)
+
+#saliva percent conversion
+saliva$Epi <- saliva$Epi*100
+saliva$IC <- saliva$IC*100
+saliva$Epithelial_saliva <- saliva$Epi
+saliva$Immune_saliva <- saliva$IC
+saliva <- saliva %>% select(-Epi, -IC)
+
+######################### ENCODE-Reinius estimates too #########################
+
+library(tidyverse)
+enc_rein <- estimateLC(beta_final_all, ref = "lauren_encode_reinius_ref")
+
+#change rownames
+rownames(enc_rein) <- pd_final_all$Sample.ID
+#add rownames column
+enc_rein$sample_id <- rownames(enc_rein)
+
+#enc_rein percent conversion
+enc_rein$Epi <- enc_rein$Epi*100
+enc_rein$IC <- enc_rein$IC*100
+enc_rein$Epithelial_enc_rein <- enc_rein$Epi
+enc_rein$Immune_enc_rein <- enc_rein$IC
+enc_rein <- as.data.frame(enc_rein)
+enc_rein <- enc_rein %>% select(-Epi, -IC)
+
+#merge the two datasets
+est <- full_join(saliva, enc_rein, by = "sample_id")
+estimates <- est%>%
+  select(sample_id, celltype,
+         Epithelial_saliva,
+         Immune_saliva,
+         Epithelial_enc_rein,
+         Immune_enc_rein
+         )
+
+rownames(estimates) <- estimates$sample_id
+```
+
+
+# Subset the whole saliva from both reference panels
+```{r}
+#IMMUNE
+saliva_sub <- estimates[estimates$celltype == "whole", ]
+```
+
+
+
+# saliva vs encode-reinius scatterplots
+```{r}
+library(ggplot2)
+#saliva vs encode-reinius - IMMUNE
+setwd("~/Research 2020")
+png("07-30-20 saliva vs encode-reinius - immune.png", width = 1000, height = 1000)
+ggplot(saliva_sub, aes(x = Immune_saliva, y = Immune_enc_rein))+
+  geom_point(size = 6, shape = 16)+
+  geom_smooth(method = lm, se = FALSE)+
+  xlab("Saliva reference immune (%)")+
+  ylab("ENCODE-Reinius reference immune (%)")+
+  xlab("")+
+  ylab("")+
+  xlim(-3,120)+
+  ylim(-3,120)+
+  theme_classic()+
+  theme(axis.title = element_text(size=40),
+        axis.text = element_text(size=60, colour = "black"))+
+  theme(plot.margin = unit(c(2,2,2,2), "cm"))
+dev.off()
+
+#calculate stats
+enc_sal_immune <- lm(Immune_saliva ~ Immune_enc_rein, data = saliva_sub)
+summary(enc_sal_immune)
+cor.test(saliva_sub$Immune_saliva, saliva_sub$Immune_enc_rein)
+#stats: correlation r = 0.962
+
+
+#ewastools vs ENCODE-reinius - epith
+setwd("~/Research 2020")
+png("07-30-20 saliva vs encode-reinius - epithelial.png", width = 1000, height = 1000)
+ggplot(saliva_sub, aes(x = Epithelial_saliva, y = Epithelial_enc_rein))+
+  geom_point(size = 6, shape = 16)+
+  geom_smooth(method = lm, se = FALSE)+
+  #xlab("ewastools (%)")+
+  #ylab("epiDISH (%)")+
+  xlab("")+
+  ylab("")+
+  xlim(-3,120)+
+  ylim(-3,120)+
+  theme_classic()+
+  theme(axis.title = element_text(size=40),
+        axis.text = element_text(size=60, colour = "black"))+
+  theme(plot.margin = unit(c(2,2,2,2), "cm"))
+dev.off()
+
+#calculate stats
+# epi_ewas_epith <- lm(epidish_epith ~ ewastools_epith, data = percents)
+# summary(epi_ewas_epith)
+cor.test(saliva_sub$Epithelial_saliva, saliva_sub$Epithelial_enc_rein)
+#stats: correlation r = 0.914
+
+#conclusion: ewastools and epidish estimates are associated
+```
+
+
+# Supplemental Figure 8
+```{r}
+setwd("~/Research 2019")
+
+beta_final_all <- readRDS("06-11-19 beta_final_all_samps.rds")
+pd_final_all <- readRDS("06-11-19 pd_final_all_samps.rds")
+
+library(ewastools)
+
+saliva <- estimateLC(beta_final_all, ref = "lauren_saliva_ref")
+enc_rein <- estimateLC(beta_final_all, ref = "lauren_encode_reinius_ref")
+
+colnames(beta_final_all)
+
+saliva$meth_id <- colnames(beta_final_all)
+enc_rein$meth_id <- colnames(beta_final_all)
+x <- saliva$meth_id
+y <- enc_rein$meth_id
+
+#check that the meth_ids are in the same order
+test_match_order <- function(x,y) {
+if (all(x==y)) print('Perfect match in same order')
+
+if (!all(x==y) && all(sort(x)==sort(y))) print('Perfect match in wrong order')
+
+if (!all(x==y) && !all(sort(x)==sort(y))) print('No match')
+}
+test_match_order(x,y) #"Perfect match in same order"
+
+#check that the pd and estimate files are in the same order
+x <- pd_final_all$meth_id
+test_match_order <- function(x,y) {
+if (all(x==y)) print('Perfect match in same order')
+
+if (!all(x==y) && all(sort(x)==sort(y))) print('Perfect match in wrong order')
+
+if (!all(x==y) && !all(sort(x)==sort(y))) print('No match')
+}
+test_match_order(x,y) #"Perfect match in same order"
+
+#add the sample names and cell types
+saliva$id <- pd_final_all$Sample_Group
+saliva$celltype <- pd_final_all$celltype
+enc_rein$id <- pd_final_all$Sample_Group
+enc_rein$celltype <- pd_final_all$celltype
+
+#select the whole samples
+w_saliva <- saliva[saliva$celltype == "whole", ]
+w_enc_rein <- enc_rein[enc_rein$celltype == "whole", ]
+```

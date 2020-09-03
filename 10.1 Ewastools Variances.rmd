@@ -1,0 +1,217 @@
+---
+  title: "Linear Model Variance Calculations"
+author: "Jonah Fisher"
+date: "06-29-20"
+output: 
+  html_document:
+  code_folding: show
+toc: true
+toc_float: true
+theme: sandstone
+highlight: tango
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = T,
+  eval = T,
+  tidy = T
+)
+
+library(ewastools)
+library(EpiDISH)
+library(tidyverse)
+library(limma)
+library(data.table)
+library(reshape2)
+library(kableExtra)
+library(plotly)
+```
+
+# Create series of linear models and R2 values
+
+## Data prep
+
+```{r, eval = F}
+#load data and get data prepped for model
+beta <- readRDS("varcheck_betalistwith5.rds")
+qclist <- names(beta)
+
+cells <- lapply(qclist, function(qcmethod){
+  list(
+    ewastools = estimateLC(beta[[qcmethod]], ref = "saliva"),
+    epidish = epidish(beta.m = beta[[qcmethod]], ref.m = centEpiFibIC.m, method = "RPC")$estF
+  )
+})
+names(cells) <- qclist
+
+ewastoolsref <- read.table("saliva.txt") %>% rownames
+epidishref <- read.table("newrefsets/epidish.txt") %>% rownames
+
+```
+
+## Linear models with limma applied to both methods with the 4 matrices
+
+```{r, eval = F}
+
+out <- lapply(qclist, function(qcmethod, which = c("IC", "EPI")){
+  cells <- cells[[qcmethod]]
+  beta <- beta[[qcmethod]]
+  beta <- beta[!rownames(beta) %in% c(ewastoolsref, epidishref),]
+  if(which == "IC"){
+    mat_ewas <- model.matrix(~cells$ewastools$Epithelial.cells)
+    mat_epi <- model.matrix(~data.frame(cells$epidish)$Epi)
+  }
+  else if(which == "EPI"){
+    mat_ewas <- model.matrix(~cells$ewastools$Leukocytes)
+    mat_epi <- model.matrix(~data.frame(cells$epidish)$IC)
+  }
+  list(
+    ewastools = lmFit(beta, mat_ewas) %>% eBayes,
+    epidish = lmFit(beta, mat_epi) %>% eBayes
+  )
+})
+names(out) <- qclist
+
+```
+
+## Grab the r2 value from the limma output
+
+```{r, eval = F}
+#Function to derive r2 value -- use counter arg with a number to print probenum every loop of that parameter
+
+getr2 <- function(qcmethod, counter = ""){
+  r2matrix <- lapply(c("ewastools", "epidish"), function(tool){
+    #Getting linear model output and beta matrix for where we are in loop
+    out <- out[[qcmethod]][[tool]]
+    beta <- beta[[qcmethod]]
+    beta <- beta[!rownames(beta) %in% c(ewastoolsref, epidishref),]
+    
+    #"Hard-coded" r2 calculation
+    resids <- residuals.MArrayLM(out, beta)
+    means <- rowMeans(beta, na.rm = T)
+    sprintf("Calculating r2 values for %s with %s beta matrix", tool, qcmethod)
+    sapply(seq_along(means), function(probenum){
+      #Explaining the 
+      sse <- sum((resids[probenum,])^2, na.rm = T)
+      denom <- sum((beta[probenum,] - mean(beta[probenum,], na.rm = T))^2, na.rm = T)
+      if(is.numeric(counter)){
+        if(probenum%%counter == 0){
+          print(probenum)
+        }
+      }
+      1 - sse/denom
+    })  #Bind ewastools/epidish estimates to matrix and assign probenames as rownames
+  }) %>% 
+    bind_cols %>%
+    data.frame
+  
+  colnames(r2matrix) <- c("ewastools", "epidish")
+  rownames(r2matrix) <- rownames(beta[[qcmethod]][!rownames(beta[[qcmethod]]) %in% c(ewastoolsref, epidishref),])
+  r2matrix
+}
+
+r2vals <- lapply(qclist, getr2, counter = 1e4)
+names(r2vals) <- qclist
+saveRDS(r2vals, "r2val_list_saliva.rds")
+```
+
+# Look at r2 values
+
+## Create functions to visualize and peek at r2val data
+
+```{r function creation}
+r2vals <- readRDS("r2val_list_saliva.rds")
+
+#Function to plot distributions as ggplot
+plot_distributions <- function(qcmethod){
+  valsdf <- r2vals[[qcmethod]] %>%
+    gather(key = "method", value = "r2val")
+  
+  plot <- ggplot(valsdf, aes(x = r2val, fill = method)) +
+    geom_histogram(alpha = 0.4, bins = 200, position = "identity") +
+    coord_cartesian(ylim = c(0, 12000)) +
+    xlab("R2 values") +
+    ylab("Frequency") +
+    ggtitle(sprintf("Histogram of percent variation explained by qcmethod %s", qcmethod))
+  
+  assign(sprintf("plot_%s", qcmethod), plot, envir = .GlobalEnv)
+}
+
+#Function to create summaries of each method
+create_summary <- function(qcmethod){
+  summary(r2vals[[qcmethod]]) %>% 
+    kable(caption = qcmethod, digits = 3) %>%
+    kable_styling(bootstrap_options = "striped")
+}
+
+#Function to plot correlations
+plot_corrs <- function(qcmethod){
+  vals <- r2vals[[qcmethod]]
+  sprintf(
+    "The correlation between ewastools and epidish for %s is %.4f",
+    qcmethod,
+    cor(vals$ewastools, vals$epidish, use = "complete.obs")
+  ) %>%
+    writeLines()
+  
+}
+
+#Do em all
+r2_looksie <- function(qcmethod){
+  plot_corrs(qcmethod)
+  create_summary(qcmethod)
+}
+
+#Variance per probe
+plot_vars <- function(qcmethod){
+  beta <- beta[[qcmethod]]
+  beta <- beta[!rownames(beta) %in% c(ewastoolsref, epidishref),]
+  myvars <- apply(beta, 1, var) %>% data.frame
+  
+  p1 <- (ggplot(myvars, aes(x = .)) +
+           geom_histogram(fill = "grey", color = "black", bins = 100) +
+           xlab("Variance per probe") +
+           ylab("Frequency"))
+  
+  assign(sprintf("plotvar_%s", qcmethod), p1, envir = .GlobalEnv)
+}
+
+#chisquared tests
+test_chi <- function(qcmethod){
+  mat <- lapply(seq(0, 0.8, by = 0.2), function(bound){
+    c(
+      sum(r2vals[[qcmethod]]$ewastools > bound & r2vals[[qcmethod]]$ewastools < (bound + 0.2), na.rm = T),
+      sum(r2vals[[qcmethod]]$epidish > bound & r2vals[[qcmethod]]$epidish < (bound + 0.2), na.rm = T)
+    )
+  }) %>% bind_cols()
+  mat
+  chisq.test(mat)
+}
+```
+  
+## R2 investigate{.tabset}
+
+#create freq plot
+```{r}
+r2long <- gather(r2val_list_saliva_v2$norm, key = "method", value = "r2val")
+
+setwd("C:/Users/HP/Documents/Research 2020")
+png("frequency plot of encode-reinius and saliva r2.png", width = 800, height = 600)
+ggplot(r2long, aes(x = r2val, color = method)) +
+  geom_freqpoly(bins = 1000, position = "identity") +
+  xlab("Value of coefficient of determination") +
+  ylab("Frequency") +
+  scale_color_hue(name = "Sample used", labels = c("ENCODE and Reinius", "Saliva Panel"))+
+    theme(text = element_text(size=20))+ #makes text bigger
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+dev.off()
+```
+  

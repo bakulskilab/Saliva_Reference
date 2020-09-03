@@ -1,0 +1,250 @@
+---
+title: "ENCODE preprocess"
+author: "Lauren Middleton"
+date: "7/2/2019"
+output: html_document
+---
+```{r}
+# Purpose:  Explore the tissues in encode
+#
+# Inputs:   pd.paper, pd.demog - subsetted cell types and all encode cell types
+#           beta_final_all_samps - saliva beta matrix that includes whole and oragene samples
+#           pd_final_all_samps - saliva descriptive file
+#
+# Outputs:  plots, estimates of cell proportions using epidish
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/HP/Documents/Research 2019")
+knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
+```
+
+# set up
+```{r}
+#BiocManager::install("EpiDISH")
+
+library(ggplot2)
+library(EpiDISH)
+data(centEpiFibIC.m)
+
+#these are ENCODE-related files
+pd.paper <- readRDS("07-03-19 pd.paper.rds") #subsetted cell lines
+pd.demog <- readRDS("07-02-19 pd.demog.rds") #all encode cell lines
+
+#these are saliva project files
+beta_final <- readRDS("06-11-19 beta_final.rds")
+pd_final <- readRDS("06-11-19 pd_final.rds")
+beta_final_all <- readRDS("06-11-19 beta_final_all_samps.rds")
+pd_final_all <- readRDS("06-11-19 pd_final_all_samps.rds")
+```
+
+# Set up Karyotype
+```{r}
+#replace all NAs in Karyotype with Other
+Karyotype <- ifelse(is.na(pd.demog$Karyotype), "Other", as.character(pd.demog$Karyotype))
+table(Karyotype)
+
+#add Karyotype to pd.beta
+pd.demog$Karyotype <- Karyotype
+class(pd.demog$Karyotype)
+
+# Turn karyotype to factor var
+pd.demog$Karyotype <- as.factor(pd.demog$Karyotype)
+class(pd.demog$Karyotype)
+
+#create a var for if the cell line was included or not
+included <- ifelse(pd.demog$geo_accession %in% pd.paper$geo_accession, "In paper", "Not in paper")
+included
+table(included) #18 are in the paper, 44 are not
+
+#add the new var to pd.demog
+pd.demog$included <- included
+table(pd.demog$included, pd.demog$Cell.Type) #11 epith in paper, 7 fibroblast, 0 all others!
+
+#save pd.demog
+saveRDS(pd.demog, "07-15-19 pd.demog.rds")
+#write.csv(pd.demog, "07-15-19 pd.demog.csv")
+#manually editing csv for Cell.Lineage
+pd.demog <- read.csv("07-15-19 pd.demog.csv")
+```
+
+
+# Histogram of Normal vs Cancer
+```{r}
+ggplot(pd.demog, aes(x = Karyotype, fill = included))+
+  geom_bar()+
+  theme_bw()+
+  theme_classic()
+  #+annotate("label", x = "Normal", y = 30, label = "17 out of 29")
+
+table(pd.demog$Karyotype, pd.demog$included)
+```
+
+# Histogram of Cell Lineage
+```{r}
+table(pd.demog$Cell.Lineage, exclude = NULL) #18, 7 NA
+table(pd.demog$Cell.Lineage, pd.demog$included, exclude = NULL)
+
+ggplot(pd.demog, aes(x = Cell.Lineage, fill = included))+
+  geom_bar()+
+  theme_bw()+
+  theme_classic()
+
+
+
+  #          GSM999336 GSM999340 GSM999342 GSM999344 GSM999345 GSM999346 GSM999348 GSM999350 GSM999355
+  #                  0         0         0         0         0         0         0         0         0
+  # 0.7854           0         0         0         0         0         0         0         0         0
+  # 81.8317          0         0         0         0         0         0         0         0         0
+  # Ectoderm         1         1         0         0         0         0         0         0         0
+  # Endoderm         0         0         0         0         1*        1*        0         0         0
+  # Mesoderm         0         0         0         0         0         0         0         0         0
+  # PC1              0         0         0         0         0         0         0         0         0
+  # <NA>             0         0         1*        1*        0         0         1*        1*        1*
+  #         
+  #          GSM999361 GSM999362 GSM999369 GSM999378 GSM999380 GSM999384 GSM999385 GSM999390 GSM999394
+  #                  0         0         0         0         0         0         0         0         0
+  # 0.7854           0         0         0         0         0         0         0         0         0
+  # 81.8317          0         0         0         0         0         0         0         0         0
+  # Ectoderm         0         1         0         0         1         0         1         0         0
+  # Endoderm         0         0         0         1*        0         0         0         0         0
+  # Mesoderm         1         0         0         0         0         0         0         1         1
+  # PC1              0         0         0         0         0         0         0         0         0
+  # <NA>             0         0         1         0         0         1         0         0         0
+```
+
+# Histogram of Cell Sex
+```{r}
+ggplot(pd.demog, aes(x = predicted_sex, fill = included))+
+  geom_bar()+
+  theme_bw()+
+  theme_classic()
+
+#should be 5 F, 13 M
+table(pd.demog$predicted_sex, pd.demog$included, exclude = NULL)
+#    In paper Not in paper
+#  m       13           18
+#  f        5           17
+```
+
+# Histogram of Cell Types
+```{r}
+ggplot(pd.demog, aes(x = Cell.Type, fill = included))+
+  geom_bar()+
+  theme_bw()+
+  theme_classic()
+table(pd.demog$Cell.Type, pd.demog$included, exclude = NULL)
+```
+
+
+# Estimate cell types in saliva using ENCODE
+```{r}
+beta_final_all <- readRDS("06-11-19 beta_final_all_samps.rds")
+pd_final_all <- readRDS("06-11-19 pd_final_all_samps.rds")
+library(EpiDISH)
+out.1 <- epidish(beta.m = beta_final_all, ref.m = centEpiFibIC.m, method = "RPC")
+head(out.1$estF)
+
+
+rownames(out.1$estF) <- pd_final_all$Sample.ID
+head(out.1$estF)
+
+out.1_df <- as.data.frame(out.1$estF)
+str(out.1_df)
+
+# out.1_df <- as.data.frame(out.1)
+```
+
+#Visualize cell estimations
+```{r}
+library(ggplot2)
+
+#make the variales into a data frame format from a list
+estF_df <- as.data.frame(out.1$estF)
+
+#set up blank columns
+percentages <- c()
+samples <- c()
+cell_types <- c()
+
+#fill in the columns
+for (i in 1:nrow(estF_df)) {
+  for (j in 1:ncol(estF_df)) {
+    perc <- estF_df[i,j]
+    sample <- rownames(estF_df)[i]
+    cell_type <- colnames(estF_df)[j]
+    
+    percentages <- c(percentages, perc)
+    samples <- c(samples, sample)
+    cell_types <- c(cell_types, cell_type)
+  }
+}
+
+# Create a new dataframe with samples, cell_types, and percentages (in that order)
+# as the columns.
+estF_expanded <- data.frame(samples, cell_types, percentages)
+
+
+#add a cell type column to estF_expanded
+celltype1 <- gsub("SAL.*_", "", estF_expanded$samples)
+table(celltype1)
+#  CD45neg   CD45pos     large largeDupl 
+#       27        60        51         6
+
+#remove the Dupl from large
+celltype <- gsub("Dupl", "", celltype1)
+table(celltype)
+# CD45neg CD45pos   large 
+#      27      60      57
+
+#collapse whole and oragene into one whole category
+table(celltype)
+# CD45pos   large oragene   whole 
+#      60      54      12      54
+celltype <- ifelse(celltype == "oragene", "whole", celltype)
+table(celltype)
+
+#add celltype to the dataset
+estF_expanded$celltype <- celltype
+
+percent <- (estF_expanded$percentages)*100
+
+
+#violin plot the predicted proportions
+pdf("07-15-19 epidish predicted saliva proportions.pdf")
+ggplot(estF_expanded, aes(x = estF_expanded$cell_types,
+                          y = percent),
+       group = celltype)+
+  geom_violin(fill = "black", color = "black")+
+  geom_jitter(position = position_jitter(0.1),
+              size = 2,
+              aes(colour = factor(celltype), shape = celltype))+
+  xlab("Predicted Cell Types")+
+  ylab("Percent (%)")+
+  theme(panel.background = element_rect(fill = "white",
+                                colour = "black",
+                                size = 0.5, linetype = "solid"))+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())+
+  #make the legend
+  scale_colour_manual(name = "Cell Type",
+                    labels = c("Immune Cells", "Epithelial", "Whole"),
+                    values = c("darkmagenta", "darkgreen", "turquoise1")) +   
+  scale_shape_manual(name = "Cell Type",
+                   labels = c("Immune Cells", "Epithelial", "Whole"),
+                   values = c(16, 8, 17))+
+  theme(text = element_text(size=20))+
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+
+  scale_x_discrete(breaks=c("Epi","Fib","IC"),
+        labels=c("Epithelial", "Fibroblast", "Immune Cell"))
+dev.off()
+
+
+#proportion of fibroblasts
+head(estF_expanded)
+table(estF_expanded$cell_types, estF_expanded$percentages)
+#largest percentage is 3.7% in one sample (0% in 40/60 samples)
+```

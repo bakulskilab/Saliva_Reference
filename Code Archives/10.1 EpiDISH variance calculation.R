@@ -1,6 +1,16 @@
-# VARIANCE ESTIMATE FOR EWASTOOLS BASED ON QC BETA MATRIX
+##################################################################################################
+##################### VARIANCE ESTIMATE FOR EPIDISH BASED ON QC BETA MATRIX ######################
+##################################################################################################
 
-setwd("C:/Users/HP/Documents/Research 2019")
+##################################################################################################
+# Purpose:  calculate the average variance explained by cell types in epidish and saliva
+#
+# Inputs:   "06-11-19 beta_final_all_samps.rds" - beta matrix from saliva samples
+#
+# Outputs:  average R2 and histogram of all R2s
+##################################################################################################
+
+setwd("C:/Users/T7920/Desktop/Vy/Saliva in Children")
 
 ##################################################################################################
 ################################# INSTALL PACKAGES AND LOAD THEM #################################
@@ -11,9 +21,13 @@ setwd("C:/Users/HP/Documents/Research 2019")
 #     install.packages("BiocManager")
 # BiocManager::install("minfi")
 
+#install.packages("devtools")
+#install.packages("EpiDISH") #not for R 3.6.1
+
 library(minfi)
 #library(BeadSorted.Saliva.EPIC)
 library(tidyverse)
+library(EpiDISH)
 load("centEpiFibIC.m.rda")
 library(broom)
 
@@ -51,15 +65,15 @@ dim(beta_samps) #795694     18
 
 
 ##################################################################################################
-############################ USE EWASTOOLS TO ESTIMATE THE CELL PROPORTIONS ######################
+########################## USE EPIDISH TO ESTIMATE THE CELL PROPORTIONS ##########################
 ##################################################################################################
 
 
-tools = estimateLC(beta_samps, ref = "saliva")
+dish <- epidish(beta_samps, ref.m = centEpiFibIC.m, method = "RPC")$estF
 
 
 ##################################################################################################
-############################### RUN THE MODEL TO GENERATE THE R2S ################################
+############################## RUN THE MODEL TO GENERATE THE R2S #################################
 ##################################################################################################
 
 
@@ -67,9 +81,9 @@ start_time <- print(Sys.time())
 
 
 counter <<- 1
-dish.out <- apply(beta_samps[1:5000, ], 1, function(probs){
+dish.out <- apply(beta_samps, 1, function(probs){
   print(counter)
-  df <- data.frame(methyl = probs, tools)
+  df <- data.frame(methyl = probs, dish)
   # print(str(df))
   model <- lm(methyl ~ ., data = df)
   #print(class(model))
@@ -80,7 +94,7 @@ dim_beta_samps <- dim(beta_samps)
 print(Sys.time())
 
 #Compile the results of the regression
-varestimates <- list(ewastools_saliva = dish.out)
+varestimates <- list(epidish = dish.out)
 
 beta_subset <- beta_samps
 
@@ -98,9 +112,9 @@ run_regression_model_on_cell_types <- function(probs
     t(.) #transforms the dataset 90 degrees
   # print(probs_updated)
   
-  df_tools <- data.frame(methyl = probs_updated, tools) #makes this a data frame
-  # print(df_tools)
-  model <- lm(methyl ~ ., data = df_tools)
+  df_dish <- data.frame(methyl = probs_updated, tools) #makes this a data frame
+  # print(df_dish)
+  model <- lm(methyl ~ ., data = df_dish)
   
   #Separate out the coefficients from the other statistics
   if(stats_of_interest == "coefficients")
@@ -135,7 +149,7 @@ rsquareds <- lapply(summaries, function(method){
     # print(probe$r.squared)
   }) %>% unlist
 }) %>% bind_cols
-#rsquareds
+rsquareds
 print(Sys.time())
 
 
@@ -147,15 +161,15 @@ print(Sys.time())
 rsquareds <- as.data.frame(rsquareds)
 
 #Save the R2 dataset
-write.csv(rsquareds, "07-03-20 rsquared values.csv")
+write.csv(rsquareds, "06-08-20 rsquared values.csv")
 
 #Calculate some stats
-mean <- mean(rsquareds$ewastools_saliva)
-median <- median(rsquareds$ewastools_saliva)
+mean <- mean(rsquareds$epidish)
+median <- median(rsquareds$epidish)
 
 #Make a histogram of the R2 values
-pdf("07-03-20 rsquared histogram.pdf")
-hist(rsquareds$ewastools_saliva)
+pdf("06-08-20 rsquared histogram.pdf")
+hist(rsquareds$epidish)
 dev.off()
 
 

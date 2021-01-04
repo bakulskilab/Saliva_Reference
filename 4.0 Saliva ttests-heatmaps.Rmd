@@ -21,6 +21,8 @@ knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2019")
 
 # Set up;
 ```{r}
+setwd("C:/Users/HP/Documents/Research 2019")
+
 #load in data files from 06-11-19;
 #these don't include whole or oragene or c45neg
 pd_final <- readRDS("06-11-19 pd_final.rds")
@@ -68,7 +70,37 @@ ttest_large <- rowttests(as.matrix(beta_final), as.factor(pd_final$large), tstat
 ## doing lower p value because larger chance of getting <0.05
 ```{r}
 length(which(ttest_cd45pos$p.value<1e-8)) #164793
-length(which(ttest_large$p.value<1e-8)) #164793
+old_probes_index <- which(x = ttest_cd45pos$p.value<1e-8)
+old_probes <- rownames(ttest_cd45pos)[old_probes_index]
+
+#for fun, what if we used 0.05 as the significance level:
+length(which(ttest_large$p.value < 0.05)) #466928
+466928 / 795694 #58.7%
+
+###################################################################################################
+
+#Adding a bonferroni cutoff for Reviewer 2 comments:
+
+#what is the bonferroni cutoff
+num_probes <- length(rownames(beta_final))
+bonferroni_long <- 0.05 / num_probes
+bonferroni <- round(bonferroni_long, digits = 10)
+
+#how many probes are significant
+num_sig_probes <- length(which(ttest_cd45pos$p.value < bonferroni))
+#181577
+
+#what percentage of the chip is significant
+(num_sig_probes / num_probes)*100
+#22.8%
+
+#new probes
+new_probes_index <- which(ttest_cd45pos$p.value < bonferroni)
+new_probes <- rownames(ttest_cd45pos)[new_probes_index]
+
+#how many of the new probes are in the old probe list
+length(intersect(old_probes, new_probes))
+#164793 - all of the old probes under the more strict cutoff are in the new bonferonni cutoff
 ```
 
 

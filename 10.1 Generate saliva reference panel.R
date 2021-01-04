@@ -10,7 +10,7 @@
 # Purpose:  generate the list of probes to use as the reference panel for saliva cell types
 #
 # Inputs:   "06-11-19 beta_final.rds" - beta matrix of sorted saliva samples
-#           
+#           "06-11-19 pd_final.rds"   - demographics file for samples
 #
 # Outputs:  "saliva.txt" - list of probes for saliva reference panel
 #######################################################################################################

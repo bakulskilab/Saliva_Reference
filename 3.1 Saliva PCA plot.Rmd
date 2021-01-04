@@ -10,7 +10,7 @@ output: html_document
 # Inputs:   pd_final   - details of sample fractions (epithelial and immune)
 #           beta_final - beta matrix of sample fractions (epithelial and immune)
 #
-# Outputs:  density plot figure
+# Outputs:  PCA plot figure
 ```
 
 

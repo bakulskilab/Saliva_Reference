@@ -35,17 +35,22 @@ pd_meth <- pd_final_all$meth_id
 beta_meth == pd_meth #all TRUE
 
 #add the names of samples (Sample.ID) to colnames of beta matrix
-if(pd_final_all$meth_id == colnames(beta_final_all)){
+if(pd_final_all$meth_id == colnames(beta_final_all))
+  {
    colnames(beta_final_all) <- pd_final_all$Sample.ID
   }
 
 
 #make the cell proportion estimates
-saliva <- estimateLC(beta_final_all, ref = "lauren_saliva_ref")
+saliva <- estimateLC(beta_final_all,
+                     ref = "saliva",
+                     constrained = TRUE)
 
 #add column for sample id and celltype
 saliva$id <- pd_final_all$id
 saliva$celltype <- pd_final_all$celltype
+
+saliva <- as.data.frame(saliva)
 
 #change rownames
 rownames(saliva) <- pd_final_all$Sample.ID
@@ -53,18 +58,23 @@ rownames(saliva) <- pd_final_all$Sample.ID
 saliva$sample_id <- rownames(saliva)
 
 #saliva percent conversion
-saliva$Epi <- saliva$Epi*100
-saliva$IC <- saliva$IC*100
-saliva$Epithelial_saliva <- saliva$Epi
-saliva$Immune_saliva <- saliva$IC
-saliva <- saliva %>% select(-Epi, -IC)
+saliva$Epithelial.cells <- saliva$Epithelial.cells*100
+saliva$Leukocytes <- saliva$Leukocytes*100
+saliva$Epithelial_saliva <- saliva$Epithelial.cells
+saliva$Immune_saliva <- saliva$Leukocytes
+saliva$celltype <- pd_final_all$celltype
+saliva <- saliva %>%
+  select(-Epithelial.cells, -Leukocytes)
 
 ######################### ENCODE-Reinius estimates too #########################
 
 library(tidyverse)
-enc_rein <- estimateLC(beta_final_all, ref = "lauren_encode_reinius_ref")
+enc_rein <- estimateLC(beta_final_all,
+                       ref = "encode_reinius",
+                       constrained = TRUE)
 
 #change rownames
+enc_rein <- as.data.frame(enc_rein)
 rownames(enc_rein) <- pd_final_all$Sample.ID
 #add rownames column
 enc_rein$sample_id <- rownames(enc_rein)
@@ -72,13 +82,19 @@ enc_rein$sample_id <- rownames(enc_rein)
 #enc_rein percent conversion
 enc_rein$Epi <- enc_rein$Epi*100
 enc_rein$IC <- enc_rein$IC*100
-enc_rein$Epithelial_enc_rein <- enc_rein$Epi
-enc_rein$Immune_enc_rein <- enc_rein$IC
-enc_rein <- as.data.frame(enc_rein)
-enc_rein <- enc_rein %>% select(-Epi, -IC)
+
+#flip the epi and ic estimates because they're still backwards
+enc_rein$Immune_enc_rein <- enc_rein$Epi
+enc_rein$Epithelial_enc_rein <- enc_rein$IC
+
+#fix up things
+enc_rein$celltype <- pd_final_all$celltype
+enc_rein <- enc_rein %>%
+  select(-Epi, -IC)
 
 #merge the two datasets
-est <- full_join(saliva, enc_rein, by = "sample_id")
+merge_by <- c("sample_id", "celltype")
+est <- full_join(saliva, enc_rein, by = merge_by)
 estimates <- est%>%
   select(sample_id, celltype,
          Epithelial_saliva,
@@ -93,7 +109,7 @@ rownames(estimates) <- estimates$sample_id
 
 # Subset the whole saliva from both reference panels
 ```{r}
-#IMMUNE
+#Whole
 saliva_sub <- estimates[estimates$celltype == "whole", ]
 ```
 
@@ -107,13 +123,15 @@ setwd("~/Research 2020")
 png("07-30-20 saliva vs encode-reinius - immune.png", width = 1000, height = 1000)
 ggplot(saliva_sub, aes(x = Immune_saliva, y = Immune_enc_rein))+
   geom_point(size = 6, shape = 16)+
-  geom_smooth(method = lm, se = FALSE)+
+  # geom_smooth(method = lm, se = FALSE)+
+  geom_abline(intercept = 0,
+              slope = 1)+
   xlab("Saliva reference immune (%)")+
   ylab("ENCODE-Reinius reference immune (%)")+
   xlab("")+
   ylab("")+
-  xlim(-3,120)+
-  ylim(-3,120)+
+  xlim(-3,100)+
+  ylim(-3,100)+
   theme_classic()+
   theme(axis.title = element_text(size=40),
         axis.text = element_text(size=60, colour = "black"))+
@@ -124,21 +142,24 @@ dev.off()
 enc_sal_immune <- lm(Immune_saliva ~ Immune_enc_rein, data = saliva_sub)
 summary(enc_sal_immune)
 cor.test(saliva_sub$Immune_saliva, saliva_sub$Immune_enc_rein)
-#stats: correlation r = 0.962
+#stats: correlation r = 0.90
+```
 
-
+```{r}
 #ewastools vs ENCODE-reinius - epith
 setwd("~/Research 2020")
 png("07-30-20 saliva vs encode-reinius - epithelial.png", width = 1000, height = 1000)
 ggplot(saliva_sub, aes(x = Epithelial_saliva, y = Epithelial_enc_rein))+
   geom_point(size = 6, shape = 16)+
-  geom_smooth(method = lm, se = FALSE)+
+  # geom_smooth(method = lm, se = FALSE)+
+  geom_abline(intercept = 0,
+              slope = 1)+
   #xlab("ewastools (%)")+
   #ylab("epiDISH (%)")+
   xlab("")+
   ylab("")+
-  xlim(-3,120)+
-  ylim(-3,120)+
+  xlim(-3,100)+
+  ylim(-3,100)+
   theme_classic()+
   theme(axis.title = element_text(size=40),
         axis.text = element_text(size=60, colour = "black"))+
@@ -149,9 +170,27 @@ dev.off()
 # epi_ewas_epith <- lm(epidish_epith ~ ewastools_epith, data = percents)
 # summary(epi_ewas_epith)
 cor.test(saliva_sub$Epithelial_saliva, saliva_sub$Epithelial_enc_rein)
-#stats: correlation r = 0.914
+#stats: correlation r = 0.90
 
 #conclusion: ewastools and epidish estimates are associated
+```
+
+# Calculate RMSE for the comparison plots - Figure 6
+```{r}
+# setwd("C:/Users/HP/Documents/R/win-library/3.6/DSRMSE")
+# source("projectCellTypeWithError.R")
+
+library(Metrics)
+
+#whole immune estimates
+rmse(actual = saliva_sub$Immune_enc_rein,
+     predicted = saliva_sub$Immune_saliva)
+#30.1176
+
+#whole epithelial estimates
+rmse(actual = saliva_sub$Epithelial_enc_rein,
+     predicted = saliva_sub$Epithelial_saliva)
+#30.1176
 ```
 
 

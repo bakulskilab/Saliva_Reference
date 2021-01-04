@@ -39,7 +39,9 @@ head(pd_final_all)
 
 # Do the proportion estimation and do some logic checks
 ```{r}
-cells_comp <- estimateLC(beta_final_all, "Reinius")
+cells_comp <- estimateLC(beta_final_all,
+                         "Reinius",
+                         constrained = TRUE)
 
 class(cells_comp) #data table
 
@@ -51,18 +53,15 @@ rownames(cells_comp) <- colnames(beta_final_all)
 head(cells_comp)
 
 #how many predicted as negative
-table(cells_comp$CD8 < 0) #5 predict as 0
+table(cells_comp$CD8 < 0) #50 predict as 0
 table(cells_comp < 0) #1 predicts as 0 outside of CD8
-table(cells_comp == 0)
+table(cells_comp == 0) #6 are 0
 
 #reassign the negative values as 0
 cells_comp[cells_comp <0] <- 0
 
 #how many predict as >1 (this is a proportion, not %)
-table(cells_comp$GR > 1) #2 predict as >100
-
-#reassign the 1+ values as 1
-cells_comp[cells_comp >1] <- 1
+table(cells_comp$GR > 1) #0 predict as >100%
 ```
 
 
@@ -86,45 +85,87 @@ pd_final_all_wbc$GR
 
 #Granulocytes:
 tapply(pd_final_all_wbc$GR, pd_final_all_wbc$celltype, range)
-#immune: 30.5-100%
-#epith: 12.2-24.6%
-#oragene: 41.1-86.4%
-#whole: 19.5-100%
+# $CD45pos
+# [1] 0.2916210 0.9873432
+# 
+# $large
+# [1] 0.1081259 0.2207963
+# 
+# $oragene
+# [1] 0.3957963 0.8458807
+# 
+# $whole
+# [1] 0.1702333 0.9892852
 
 #CD4:
 tapply(pd_final_all_wbc$CD4, pd_final_all_wbc$celltype, range)
-#immune: 0-28.0%
-#epith: 35.0-42.3%
-#oragene: 6.8-28.1%
-#whole: 0.5-39.4%
+# $CD45pos
+# [1] 1.734723e-18 2.958584e-01
+# 
+# $large
+# [1] 0.3717719 0.4510124
+# 
+# $oragene
+# [1] 0.06318309 0.29040693
+# 
+# $whole
+# [1] 0.0000000 0.4154079
 
 #CD8:
 tapply(pd_final_all_wbc$CD8, pd_final_all_wbc$celltype, range)
-#immune: 0%
-#epith: 0%
-#oragene: 0%
-#whole: 0%
+# $CD45pos
+# [1] 0.000000e+00 2.684399e-18
+# 
+# $large
+# [1] 0.000000e+00 3.460465e-18
+# 
+# $oragene
+# [1] 0.000000e+00 3.817042e-19
+# 
+# $whole
+# [1] 0.00000e+00 3.05911e-17
 
 #B cells
 tapply(pd_final_all_wbc$B, pd_final_all_wbc$celltype, range)
-#immune: 3.3-20.0%
-#epith: 18.2-20.7%
-#oragene: 8.8-13.8%
-#whole: 0.5-39.4%
+# $CD45pos
+# [1] 0.01265678 0.18995991
+# 
+# $large
+# [1] 0.1739747 0.1978208
+# 
+# $oragene
+# [1] 0.07704733 0.13163437
+# 
+# $whole
+# [1] 0.01071478 0.18353553
 
 #Monocytes
 tapply(pd_final_all_wbc$MO, pd_final_all_wbc$celltype, range)
-#immune: 0-14.1%
-#epith: 16.5-20.6%
-#oragene: 0-11.3%
-#whole: 0.2-16.8%
+# $CD45pos
+# [1] 1.178729e-18 1.388520e-01
+# 
+# $large
+# [1] 0.1705731 0.2067505
+# 
+# $oragene
+# [1] 0.000000 0.121691
+# 
+# $whole
+# [1] 1.126467e-18 1.664734e-01
 
 #Natural Killer
 tapply(pd_final_all_wbc$NK, pd_final_all_wbc$celltype, range)
-#immune: 0-8.7%
-#epith: 5.8-8.8%
-#oragene: 1.9-6.1%
-#whole: 0-8.3%
+# $CD45pos
+# [1] 0.0000000 0.0837087
+# 
+# $large
+# [1] 0.03599036 0.06926116
+# 
+# $oragene
+# [1] 0.003371127 0.060471388
+# 
+# $whole
+# [1] 1.943877e-18 6.747989e-02
 ```
 
 ## 3/3/20
@@ -180,7 +221,7 @@ immune_wbc_est_long$wbc_cell_type <- gsub("MO", "Monocyte", immune_wbc_est_long$
 immune_wbc_est_long$wbc_cell_type <- gsub("NK", "Natural Killer", immune_wbc_est_long$wbc_cell_type)
 table(immune_wbc_est_long$wbc_cell_type)
 
-range(immune_wbc$GR) #0.3-1.0
+range(immune_wbc_est_long$estimate) #0-98
 ```
 
 # Set up the Whole saliva dataset
@@ -257,10 +298,18 @@ table(oragene_wbc_est_long$wbc_cell_type)
 library(ggplot2)
 
 
-immune_wbc_est_long$wbc_cell_type <- factor(immune_wbc_est_long$wbc_cell_type, levels = c("Granulocyte", "CD4", "CD8", "B cell", "Monocyte", "Natural Killer"))
+immune_wbc_est_long$wbc_cell_type <- factor(immune_wbc_est_long$wbc_cell_type,
+                                            levels = c("Granulocyte",
+                                                       "CD4",
+                                                       "CD8",
+                                                       "B cell",
+                                                       "Monocyte",
+                                                       "Natural Killer"))
 
-png("06-19-19 03-03-20 WBC prediction from Reinius - Immune.png", width=1300, height=1000)
-ggplot(data = immune_wbc_est_long, aes(x = wbc_cell_type, y = estimate, fill = wbc_cell_type))+
+png("06-19-19 12-17-20 WBC prediction from Reinius - Immune.png", width=1300, height=1000)
+ggplot(data = immune_wbc_est_long, aes(x = wbc_cell_type,
+                                       y = estimate,
+                                       fill = wbc_cell_type))+
   geom_violin(scale="count", width=1.5)+
   #GR
   geom_rect(aes(xmin = 0.5, xmax = 1.5,
@@ -474,7 +523,7 @@ all_wbc_est_long$wbc_cell_type <- factor(all_wbc_est_long$wbc_cell_type,
 
 # Graph the 3 estimate figures as a panel
 ```{r}
-png("06-19-19 03-03-20 WBC prediction from Reinius - Panel.png", width=5500, height=1200)
+png("12-17-20 WBC prediction from Reinius - Panel.png", width=5500, height=1200)
 ggplot(data = all_wbc_est_long, aes(x = wbc_cell_type, y = estimate, fill = wbc_cell_type))+
   geom_point(alpha = 0.01)+
   #GR
@@ -795,6 +844,16 @@ summary(NK_anova)  #F value Pr(>F)
                    #22.27 1.9e-07
 ```
 
+# Stats for cell types
+```{r}
+stats <- all_wbc_est_long %>%
+  group_by(wbc_cell_type, celltype) %>%
+  dplyr::summarise(
+    min = min(estimate),
+    max = max(estimate)
+  ) %>%
+  ungroup()
+```
 
 
 #____________________________________________________________________________________________________#

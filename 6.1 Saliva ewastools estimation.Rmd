@@ -22,6 +22,7 @@ knitr::opts_chunk$set(root.dir="C:/Users/HP/Documents/Research 2020")
 # Load in data and estimate with ewastools and saliva ref panel, fix things
 ```{r}
 #run ewastools package with saliva reference panel
+# devtools::install_github("hhhh5/ewastools")
 library(ewastools)
 
 # Load datasets
@@ -29,15 +30,20 @@ setwd("C:/Users/HP/Documents/Research 2019")
 pd_final_all <- readRDS("06-11-19 pd_final_all_samps.rds")
 beta_final_all <- readRDS("06-11-19 beta_final_all_samps.rds")
 
-out.1 <- estimateLC(meth = beta_final_all, ref = "lauren_saliva_ref")
-head(out.1)
+#estimate the cell proportions using the saliva reference based on 450k probes
+out.1 <- estimateLC(meth = beta_final_all, ref = "saliva")
+
+#testing the epic probes selection instead of 450k
+out_epic <- estimateLC(meth = beta_final_all, ref = "salivaEPIC")
 
 #make it a dataframe
 est <- as.data.frame(out.1)
-# View(est)
+est_epic <- as.data.frame(out_epic)
+head(est)
 
-#when package is live, use estimateLC from ewastools to get the cell proportion estimates:
-# estimates_subset_id <- estimateLC(beta_final, "saliva")
+#check that the order is the same (beta matrix and pd)
+# identical(colnames(beta_final_all), pd_final_all$meth_id)
+#TRUE
 
 #add sample names and cell types
 est$sample <- pd_final_all$Sample.ID
@@ -45,27 +51,32 @@ est$celltype <- pd_final_all$celltype
 table(est$celltype)
 # CD45pos   large oragene   whole 
 #      20      18       4      18
+est_epic$sample <- pd_final_all$Sample.ID
+est_epic$celltype <- pd_final_all$celltype
 
 #make the cell type names nice
 est$celltype <- gsub("large", "Epithelial Fractions", est$celltype)
 est$celltype <- gsub("CD45pos", "Immune Fractions", est$celltype)
 est$celltype <- gsub("whole", "Whole Samples", est$celltype)
+est_epic$celltype <- gsub("whole", "Whole Samples", est_epic$celltype)
 est$celltype <- gsub("oragene", "Oragene Kits", est$celltype)
 table(est$celltype)
 
 #make the dataset into the long form
 library(tidyverse)
-saliva_long <- gather(est, cell_type_est, estimate, IC:Epi, factor_key=TRUE)
+saliva_long <- gather(est, cell_type_est, estimate, Leukocytes:Epithelial.cells, factor_key=TRUE)
+saliva_long_epic <- gather(est_epic, cell_type_est, estimate, Leukocytes:Epithelial.cells, factor_key=TRUE)
 
 #change proportions into percentages
 saliva_long$estimate <- saliva_long$estimate*100
+saliva_long_epic$estimate <- saliva_long_epic$estimate*100
 
 table(saliva_long$cell_type_est) #60 of each
-saliva_long$cell_type_est <- gsub("Epi", "Epithelial", saliva_long$cell_type_est)
-saliva_long$cell_type_est <- gsub("IC", "Immune", saliva_long$cell_type_est)
+saliva_long$cell_type_est <- gsub("Epithelial.cells", "Epithelial", saliva_long$cell_type_est)
+saliva_long$cell_type_est <- gsub("Leukocytes", "Immune", saliva_long$cell_type_est)
+saliva_long_epic$cell_type_est <- gsub("Epithelial.cells", "Epithelial", saliva_long_epic$cell_type_est)
+saliva_long_epic$cell_type_est <- gsub("Leukocytes", "Immune", saliva_long_epic$cell_type_est)
 table(saliva_long$cell_type_est) #60 of each
-
-# View(saliva_long)
 ```
 
 
@@ -93,7 +104,8 @@ head(oragene_est)
 table(oragene_est$celltype)
 
 #subset saliva_long into Whole
-whole_est <- saliva_long[saliva_long$celltype == "Whole Fractions", ]
+whole_est <- saliva_long[saliva_long$celltype == "Whole Samples", ]
+whole_est_epic <- saliva_long_epic[saliva_long_epic$celltype == "Whole Samples", ]
 head(whole_est)
 table(whole_est$celltype)
 ```
@@ -221,9 +233,52 @@ ggplot(data = whole_est, aes(x = cell_type_est, y = estimate, fill = cell_type_e
 dev.off()
 ```
 
+# Graph Whole predictions as violin plot
+```{r}
+pdf("12-28-20 whole fraction ewastools 450k_epic probes prediction.pdf")
+ggplot(data = whole_est, aes(x = cell_type_est, y = estimate, fill = cell_type_est))+
+  geom_violin()+
+  geom_point(size = 2)+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  labs(title = "Whole samples")+
+  scale_y_continuous(breaks = seq(0,120,10),
+                     limits = c(0,120))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=20))+ #makes text bigger
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  theme(legend.position="bottom")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+
+ggplot(data = whole_est_epic, aes(x = cell_type_est, y = estimate, fill = cell_type_est))+
+  geom_violin()+
+  geom_point(size = 2)+
+  xlab("")+
+  ylab("Percent Cell Type (%)")+
+  labs(title = "Whole samples")+
+  scale_y_continuous(breaks = seq(0,120,10),
+                     limits = c(0,120))+ #set the y axis from 0-100 labeled every 10 units
+  theme(text = element_text(size=20))+ #makes text bigger
+  theme(axis.text.x = element_text(colour = "black"),
+        axis.text.y = element_text(colour = "black"))+ #change axis text color
+  theme(panel.background = element_rect(fill = "white", #this is the background
+                                colour = "black", #this is the border
+                                size = 0.1, linetype = "solid"))+
+  theme(legend.position="bottom")+
+  theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+dev.off()
+```
 
 
-# Make a panel figure of the four graphs - remade in code 7.1
+
+# Make a panel figure of the four graphs
 ```{r}
 saliva_long$cell_type_est <- factor(saliva_long$cell_type_est,
                                       levels = c("Immune", "Epithelial"))
@@ -253,3 +308,37 @@ dev.off()
 ```
 
 # Stats - updated in code 7.1
+
+
+# Are the Sick child samples different from Healthy samples?
+```{r}
+#sick samples are c(4, 6, 18)
+
+#subset only the immune estimates
+whole_immune_estimates <- whole_est[whole_est$cell_type_est == "Immune", ]
+
+#identify the sick samples
+sick_samples <- c("SAL04_whole", "SAL06_whole", "SAL18_whole")
+sick_sample_data <- whole_immune_estimates$sample %in% sick_samples
+index_samples <- which(sick_sample_data)
+
+#make a dataframe of the sick estimates
+sick_df <- whole_immune_estimates[index_samples, ]
+
+#make a dataframe of the healthy samples
+healthy_df <- anti_join(whole_immune_estimates, sick_df, by = "sample")
+
+#t-test of sick immune estimates vs healthy immune estimates in whole samples
+t.test(sick_df$estimate, healthy_df$estimate,
+       alternative = "two.sided")
+# Welch Two Sample t-test
+# 
+# data:  sick_df$estimate and healthy_df$estimate
+# t = 0.56856, df = 3.0144, p-value = 0.6093
+# alternative hypothesis: true difference in means is not equal to 0
+# 95 percent confidence interval:
+#  -48.20538  69.24529
+# sample estimates:
+# mean of x mean of y 
+#  67.13319  56.61324
+```
